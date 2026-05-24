@@ -1,0 +1,37 @@
+# 环境与密钥（含 config/.env，防止 API Key 等意外提交）
+.env
+config/.env
+*.env.local
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.Python
+
+# 数据与输出（按需取消注释以纳入版本控制）
+data/raw/*
+data/processed/*
+data/cache/*
+data/*.db
+data/*.db-journal
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/cache/.gitkeep
+
+output/*
+!output/.gitkeep
+
+logs/*
+!logs/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db

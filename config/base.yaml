@@ -1,0 +1,32 @@
+# 基础配置
+project:
+  name: a_stock_quant_system
+  timezone: Asia/Shanghai
+
+paths:
+  data_raw: data/raw
+  data_processed: data/processed
+  data_cache: data/cache
+  output: output
+  logs: logs
+  database: data/hs300_daily.db
+
+logging:
+  level: INFO
+  file: logs/app.log
+
+data:
+  default_market: cn_a
+  cache_enabled: true
+
+  # 沪深300 日线批量采集（scripts/collect_hs300_daily.py）
+  hs300_collector:
+    index_symbol: "000300"
+    start_date: "20190101"
+    end_date: "20241231"
+    adjust: "qfq"
+    request_delay_seconds: 2.0
+    progress_every: 50
+    # 日线数据源: auto=东财失败自动切腾讯, em=东财, tx=腾讯
+    hist_source: auto
+    max_retries: 3

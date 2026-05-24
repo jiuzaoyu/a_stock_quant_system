@@ -1,0 +1,35 @@
+# pip install -r requirements.txt
+# pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+jqdatasdk>=1.9.5
+
+# 数据获取层
+akshare
+tushare
+
+# 数据分析与计算层
+numpy==1.26.4
+pandas==2.2.1
+scipy
+
+# 可视化层
+matplotlib==3.8.3
+mplfinance
+
+# 回测框架
+backtrader
+
+# 机器学习层
+scikit-learn==1.4.1.post1
+xgboost
+
+# 开发工具
+jupyterlab
+ipywidgets
+
+# 配置管理
+python-dotenv
+pyyaml
+
+# 测试
+pytest>=8.0
