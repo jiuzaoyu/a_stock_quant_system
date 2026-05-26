@@ -60,7 +60,7 @@ a_stock_quant_system/
 
 **`notebooks/`** — 仅用于数据探索与策略原型，是**实验室**而非**工厂**。验证通过的逻辑应迁入 `src/` 并由 `tests/` 覆盖。
 
-**`scripts/`** — 一次性或定期跑的数据管线入口（如沪深300日线入库）。脚本应很薄，只负责读配置和调用 `src/data/`；核心逻辑放在 `hs300_collector.py`、`storage.py`。数据库文件默认 `data/hs300_daily.db`（见 `paths.database`）。
+**`scripts/`** — 一次性或定期跑的数据管线入口（如沪深300日线入库）。脚本应很薄，只负责读配置和调用 `src/data/`；核心逻辑放在 `hs300_collector.py`、`storage.py`。数据库文件默认 `data/database/hs300_daily.db`（见 `paths.database`）。
 
 **`src/`** — 按功能划分子模块，通过各包 `__init__.py` 暴露稳定公开 API，避免外部依赖内部文件路径。
 

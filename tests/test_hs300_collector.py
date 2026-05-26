@@ -10,7 +10,7 @@ from src.data.hs300_collector import HS300DailyCollector
 
 # 项目根目录 a_stock_quant_system（tests 的上一级）
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = PROJECT_ROOT / "data" / "hs300_daily.db"
+DB_PATH = PROJECT_ROOT / "data" / "database" / "hs300_daily.db"
 
 
 def test_constituent_code_extraction_from_wrong_first_column():

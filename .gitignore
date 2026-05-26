@@ -12,6 +12,8 @@ __pycache__/
 data/raw/*
 data/processed/*
 data/cache/*
+data/database/*.db
+data/database/*.db-journal
 data/*.db
 data/*.db-journal
 !data/raw/.gitkeep
