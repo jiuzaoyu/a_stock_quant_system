@@ -20,7 +20,8 @@
 - 数据源：AKShare（免费），预留切聚宽/JQData 的接口
 - 股票池：全市场预筛（先用市值/涨幅等快条件缩圈，再对候选股拉分钟线）
 - 调度：APScheduler，交易日历判断，非交易日跳过
-- 输出：`output/screener/YYYY-MM-DD.csv`
+- 输出：`output/screener/YYYY-MM-DD_HHMM.csv`（含时分，多次执行不覆盖）
+- 手动执行：`engine.run()` 独立于调度器，随时可调用；`run_screener.py --manual` 单次执行
 
 ---
 
@@ -65,7 +66,7 @@ tests/test_screener.py        ← 筛选逻辑 + 交易日判断测试
   │      VWAP = 累计成交额 / 累计成交量
   │      所有分钟 K 线的 low >= VWAP → 满足条件
   │
-  └─ 5. 输出 CSV → output/screener/YYYY-MM-DD.csv
+  └─ 5. 输出 CSV → output/screener/YYYY-MM-DD_HHMM.csv（含时分防覆盖）
 ```
 
 筛选执行顺序从快到慢，分时均线放最后（需逐只 API 调用），前几层筛完后候选股预计几十只以内。
@@ -144,9 +145,21 @@ df = filter_by_vwap(df, fetcher)  # 需要 API 调用
 ```
 
 ### `run_screener.py`
+
+两种模式：
 ```python
-from src.screener import run_scheduler
-run_scheduler()
+# 模式1：启动调度器（交易日14:30自动触发）
+python scripts/run_screener.py
+
+# 模式2：手动单次执行（立即跑，输出到 CSV）
+python scripts/run_screener.py --manual
+```
+
+入口内部调用：
+```python
+from src.screener import ScreenerEngine, run_scheduler
+# --manual → engine.run()
+# 默认   → run_scheduler() 挂 BackgroundScheduler
 ```
 
 ---
