@@ -82,6 +82,10 @@ class TestBaseWorker:
 
         worker._process_one()
 
+        # Also verify message was ACKed
+        pending = redis_client.xpending("cron:jobs:test_job", "test_group")
+        assert pending["pending"] == 0
+
         assert len(handler_called) == 0
 
     def test_handler_exception_leaves_message_in_pending(self, worker, redis_client):

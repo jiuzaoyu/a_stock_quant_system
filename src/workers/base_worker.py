@@ -1,8 +1,8 @@
-import json
 import logging
-from typing import Any, Callable
+from typing import Callable
 
 from redis import Redis
+from redis.exceptions import ResponseError
 
 log = logging.getLogger(__name__)
 
@@ -14,30 +14,34 @@ class BaseWorker:
         self._group = group
         self._consumer = consumer
         self._handlers: dict[str, Callable] = {}
+        self._running = False
         self._init_group()
 
     def _init_group(self) -> None:
         try:
             self._redis.xgroup_create(self._stream, self._group, mkstream=True)
-        except Exception:
+        except ResponseError:
             pass
 
     def register(self, job_type: str, handler: Callable[[dict[str, str]], None]) -> None:
         self._handlers[job_type] = handler
 
     def start(self, block_ms: int = 5000) -> None:
+        self._running = True
         log.info("Worker %s listening on stream %s (group=%s)", self._consumer, self._stream, self._group)
-        while True:
+        while self._running:
             try:
                 self._process_one(block_ms)
             except Exception:
                 log.exception("Worker loop error, continuing")
 
-    def _process_one(self, block_ms: int | None = None) -> None:
-        timeout = block_ms if block_ms is not None else 1000
+    def stop(self) -> None:
+        self._running = False
+
+    def _process_one(self, block_ms: int = 1000) -> None:
         messages = self._redis.xreadgroup(
             self._group, self._consumer,
-            {self._stream: ">"}, block=timeout, count=1,
+            {self._stream: ">"}, block=block_ms, count=1,
         )
         if not messages:
             return
