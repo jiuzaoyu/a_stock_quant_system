@@ -1,0 +1,27 @@
+# 盘中选股筛选器配置
+screener:
+  filters:
+    market_cap:
+      min: 50
+      max: 200
+    pct_change:
+      min: 3
+      max: 5
+    volume_ratio:
+      min: 1.0
+    turnover_rate:
+      min: 5
+      max: 10
+    limit_up_history:
+      days: 20
+      threshold: 9.8
+    vwap:
+      mode: "above"
+
+  output:
+    dir: "output/screener"
+    format: "csv"
+
+  data_source:
+    primary: "akshare"
+    fallback: "jqdata"

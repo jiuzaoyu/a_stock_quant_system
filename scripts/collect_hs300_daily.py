@@ -5,7 +5,7 @@
     python scripts/collect_hs300_daily.py
 
 逻辑实现在 src/data/hs300_collector.py，配置见 config/base.yaml → data.hs300_collector
-数据库默认: data/database/hs300_daily.db（paths.database）
+数据库默认: data/database/quant.db（paths.database）
 """
 
 import sys

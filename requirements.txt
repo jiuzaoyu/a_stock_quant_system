@@ -6,6 +6,8 @@ jqdatasdk>=1.9.5
 # 数据获取层
 akshare
 tushare
+mootdx
+
 
 # 数据分析与计算层
 numpy==1.26.4
@@ -33,3 +35,9 @@ pyyaml
 
 # 测试
 pytest>=8.0
+
+# 消息队列
+redis>=5.0.0
+
+# 测试工具
+fakeredis[lua]>=2.20.0

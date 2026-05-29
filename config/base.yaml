@@ -9,7 +9,7 @@ paths:
   data_cache: data/cache
   output: output
   logs: logs
-  database: data/database/hs300_daily.db
+  database: data/database/quant.db
 
 logging:
   level: INFO

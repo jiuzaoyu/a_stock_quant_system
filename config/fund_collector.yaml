@@ -1,0 +1,13 @@
+# 基金数据采集器配置
+fund_collector:
+  database: "data/database/quant.db"
+
+  target_fund_types:
+    - "股票型"
+    - "混合型"
+    - "指数型"
+
+  lookback_years: 2
+  request_delay_seconds: 0.5
+  progress_every: 20
+  max_retries: 3
