@@ -8,6 +8,7 @@
 配置见: config/fund_collector.yaml
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -40,13 +41,16 @@ def main():
     )
 
     logger.info("开始全量采集, 数据库: %s, 回溯: %d年", db_path, collector.lookback_years)
-    result = collector.run()
+    result = asyncio.run(collector.run())
 
     summary = storage.quality_summary()
     logger.info("库内概况: 基金 %s, 净值记录 %s, 日期 %s ~ %s",
                  summary["total_funds"], f"{summary['total_nav_rows']:,}",
                  summary["nav_date_min"], summary["nav_date_max"])
     logger.info("类型分布: %s", summary["type_counts"])
+    logger.info("经理记录: %s, 持仓记录: %s",
+                 summary.get("total_manager_rows", "?"),
+                 summary.get("total_holding_rows", "?"))
 
     if result.fail_list:
         logger.info("失败列表(前10): %s", result.fail_list[:10])

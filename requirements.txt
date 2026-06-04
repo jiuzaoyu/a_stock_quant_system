@@ -8,6 +8,9 @@ akshare
 tushare
 mootdx
 
+# 异步 HTTP
+aiohttp>=3.9.0
+
 
 # 数据分析与计算层
 numpy==1.26.4

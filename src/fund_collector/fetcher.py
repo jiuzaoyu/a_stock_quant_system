@@ -1,10 +1,11 @@
-"""天天基金 HTTP 接口：基金列表 + 全量历史净值。"""
+"""天天基金 HTTP 接口：基金列表 + 历史净值 + 基金经理 + 重仓股持仓。"""
 
 import json
 import re
-import time
-import urllib.request
 from datetime import datetime
+from typing import Optional
+
+import aiohttp
 
 TARGET_FUND_TYPE_PREFIXES = ("股票型", "混合型", "指数型")
 
@@ -15,17 +16,27 @@ HEADERS = {
 
 FUND_LIST_URL = "http://fund.eastmoney.com/js/fundcode_search.js"
 FUND_HISTORY_TPL = "https://fund.eastmoney.com/pingzhongdata/{code}.js"
+FUND_HOLDINGS_URL = (
+    "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
+    "?type=jjcc&code={code}&topline=10&year=&month=&rt=0.1"
+)
+
+HEADERS_F10 = {
+    **HEADERS,
+    "Referer": "https://fundf10.eastmoney.com/",
+}
 
 
-def fetch_fund_list() -> list[dict]:
+async def fetch_fund_list(session: Optional[aiohttp.ClientSession] = None) -> list[dict]:
     """拉取全量基金列表，过滤出股票型/混合型/指数型。
 
+    API 返回每条记录共 5 个字段: [code, pinyin_abbr, name, fund_type, pinyin_full]
+
     Returns:
-        [{"code": "019018", "name": "易方达信息产业混合C", "fund_type": "混合型"}, ...]
+        [{"code": "019018", "name": "易方达信息产业混合C", "fund_type": "混合型",
+          "pinyin": "YFDXXCYHHC", "pinyin_full": "YIFANGDAXINXICHANYEHUNHEC"}, ...]
     """
-    req = urllib.request.Request(FUND_LIST_URL, headers=HEADERS)
-    resp = urllib.request.urlopen(req, timeout=30)
-    text = resp.read().decode("utf-8")
+    text = await _get_text(session, FUND_LIST_URL, HEADERS)
 
     json_str = text[text.index("[") : text.rindex("]") + 1]
     all_funds = json.loads(json_str)
@@ -36,11 +47,19 @@ def fetch_fund_list() -> list[dict]:
         name = item[2]
         fund_type = item[3]
         if fund_type.startswith(TARGET_FUND_TYPE_PREFIXES):
-            result.append({"code": code, "name": name, "fund_type": fund_type})
+            result.append({
+                "code": code,
+                "name": name,
+                "fund_type": fund_type,
+                "pinyin": item[1],
+                "pinyin_full": item[4],
+            })
     return result
 
 
-def fetch_fund_full_history(code: str) -> list[dict]:
+async def fetch_fund_full_history(
+    code: str, session: Optional[aiohttp.ClientSession] = None
+) -> list[dict]:
     """拉取单只基金全部历史净值（自成立日起）。
 
     Args:
@@ -51,11 +70,8 @@ def fetch_fund_full_history(code: str) -> list[dict]:
           "accum_nav": 2.3456, "daily_growth": 0.25}, ...]
     """
     url = FUND_HISTORY_TPL.format(code=code)
-    req = urllib.request.Request(url, headers=HEADERS)
-    resp = urllib.request.urlopen(req, timeout=30)
-    text = resp.read().decode("utf-8")
+    text = await _get_text(session, url, HEADERS)
 
-    # 解析 var Data_netWorthTrend = [{...}];
     nav_pattern = r"Data_netWorthTrend\s*=\s*(\[.+?\])"
     nav_match = re.search(nav_pattern, text, re.DOTALL)
     if not nav_match:
@@ -63,8 +79,6 @@ def fetch_fund_full_history(code: str) -> list[dict]:
 
     nav_data = json.loads(nav_match.group(1))
 
-    # 解析 var Data_ACWorthTrend = [[ts, value], ...];  累计净值
-    # 格式: [[1735689600000, 1.2345], ...]  (二级数组，非对象数组)
     ac_pattern = r"Data_ACWorthTrend\s*=\s*(\[\[.+?\]\])"
     ac_match = re.search(ac_pattern, text, re.DOTALL)
     ac_map = {}
@@ -90,7 +104,6 @@ def fetch_fund_full_history(code: str) -> list[dict]:
         date_str = _ts_to_date(ts)
         accum_nav = item.get("equityReturn") or ac_map.get(date_str)
 
-        # 计算日增长率 (相对于前一天)
         daily_growth = 0.0
         if i > 0:
             prev_nav = nav_data[i - 1].get("y", 0)
@@ -112,19 +125,147 @@ def _ts_to_date(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
 
 
-def fetch_fund_list_refresh(storage_conn) -> int:
+async def fetch_fund_manager(
+    code: str, session: Optional[aiohttp.ClientSession] = None
+) -> list[dict]:
+    """拉取单只基金的基金经理信息。
+
+    数据来源: pingzhongdata/{code}.js 中的 Data_currentFundManager 变量。
+
+    Returns:
+        [{"manager_id": "30379533", "name": "侯昊", "star": 5,
+          "work_time": "8年又282天", "fund_size": "533.63亿(24只基金)",
+          "power_avr": 83.64, "power_json": "[87.4, 71.6, ...]",
+          "profit_json": "{...}"}, ...]
+    """
+    url = FUND_HISTORY_TPL.format(code=code)
+    text = await _get_text(session, url, HEADERS)
+
+    mgr_pattern = r"Data_currentFundManager\s*=\s*(.+?);\s*/\*"
+    mgr_match = re.search(mgr_pattern, text)
+    if not mgr_match:
+        return []
+
+    managers = json.loads(mgr_match.group(1))
+    result = []
+    for m in managers:
+        power = m.get("power", {}) or {}
+        profit = m.get("profit", {}) or {}
+
+        profit_json = "{}"
+        series = profit.get("series", [])
+        if series and series[0].get("data"):
+            profit_json = json.dumps({
+                "tenure": series[0]["data"][0].get("y"),
+                "peer_avg": series[0]["data"][1].get("y") if len(series[0]["data"]) > 1 else None,
+                "hs300": series[0]["data"][2].get("y") if len(series[0]["data"]) > 2 else None,
+            }, ensure_ascii=False)
+
+        result.append({
+            "manager_id": m.get("id", ""),
+            "name": m.get("name", ""),
+            "star": m.get("star"),
+            "work_time": m.get("workTime"),
+            "fund_size": m.get("fundSize"),
+            "power_avr": power.get("avr"),
+            "power_json": json.dumps(power.get("data", []), ensure_ascii=False),
+            "profit_json": profit_json,
+        })
+    return result
+
+
+async def fetch_fund_holdings(
+    code: str, session: Optional[aiohttp.ClientSession] = None
+) -> tuple[str, list[dict]]:
+    """拉取单只基金最新季度的前十大重仓股。
+
+    数据来源: fundf10.eastmoney.com FundArchivesDatas.aspx (HTML table)。
+
+    Returns:
+        (report_date, holdings)
+        report_date  报告期截止日 "2026-03-31"
+        holdings     [{"stock_code": "600519", "stock_name": "贵州茅台",
+                       "rank": 1, "nav_pct": 18.33,
+                       "shares_wan": 508.34, "market_cap_wan": 737086.62}, ...]
+    """
+    url = FUND_HOLDINGS_URL.format(code=code)
+    text = await _get_text(session, url, HEADERS_F10)
+
+    report_date = ""
+    date_m = re.search(r"截止至：<font[^>]*>(\d{4}-\d{2}-\d{2})</font>", text)
+    if date_m:
+        report_date = date_m.group(1)
+
+    row_pattern = (
+        r"<tr><td>(\d+)</td>"
+        r"<td>.*?>(.*?)</a></td>"
+        r"<td[^>]*>.*?>(.*?)</a></td>"
+        r".*?<td[^>]*>([^<]+)</td>"
+        r".*?<td[^>]*>([^<]+)</td>"
+        r".*?<td[^>]*>([^<]+)</td>"
+    )
+    rows = re.findall(row_pattern, text)
+
+    holdings = []
+    for row in rows:
+        rank, stock_code, stock_name, nav_pct_str, shares_str, mcap_str = row
+        try:
+            nav_pct = float(nav_pct_str.replace("%", "").strip())
+        except ValueError:
+            nav_pct = None
+        try:
+            shares_wan = float(shares_str.replace(",", "").strip())
+        except ValueError:
+            shares_wan = None
+        try:
+            market_cap_wan = float(mcap_str.replace(",", "").strip())
+        except ValueError:
+            market_cap_wan = None
+
+        holdings.append({
+            "stock_code": stock_code.strip(),
+            "stock_name": stock_name.strip(),
+            "rank": int(rank),
+            "nav_pct": nav_pct,
+            "shares_wan": shares_wan,
+            "market_cap_wan": market_cap_wan,
+        })
+
+    return report_date, holdings
+
+
+async def fetch_fund_list_refresh(storage_conn) -> int:
     """刷新基金列表（用于增量采集前更新 fund_info）。
 
     Returns:
         增/更新的基金数
     """
-    funds = fetch_fund_list()
+    funds = await fetch_fund_list()
     return storage_conn.executemany(
-        """INSERT INTO fund_info (code, name, fund_type)
-           VALUES (:code, :name, :fund_type)
+        """INSERT INTO fund_info (code, name, fund_type, pinyin, pinyin_full)
+           VALUES (:code, :name, :fund_type, :pinyin, :pinyin_full)
            ON CONFLICT(code) DO UPDATE SET
                name = excluded.name,
                fund_type = excluded.fund_type,
+               pinyin = excluded.pinyin,
+               pinyin_full = excluded.pinyin_full,
                updated_at = datetime('now', 'localtime')""",
         funds,
     )
+
+
+# ------------------------------------------------------------------ 内部辅助
+
+async def _get_text(
+    session: Optional[aiohttp.ClientSession],
+    url: str,
+    headers: dict[str, str],
+) -> str:
+    """发起 GET 请求并返回响应文本。session 为 None 时自动创建临时 session。"""
+    if session is not None:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            return await resp.text(encoding="utf-8")
+    else:
+        async with aiohttp.ClientSession(headers=headers) as s:
+            async with s.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                return await resp.text(encoding="utf-8")

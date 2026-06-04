@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 
@@ -33,11 +34,11 @@ def create_fund_worker(redis_client: Redis, db_path: str | None = None) -> BaseW
     return worker
 
 
-def _make_handler(func, storage, job_name: str):
+def _make_handler(async_func, storage, job_name: str):
     def handler(data: dict[str, str]) -> None:
         log.info("=== %s 开始 ===", job_name)
         try:
-            result = func(storage)
+            result = asyncio.run(async_func(storage))
             log.info("%s 完成: %s", job_name, result)
         except Exception:
             log.exception("%s 失败", job_name)

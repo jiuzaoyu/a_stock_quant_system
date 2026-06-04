@@ -1,16 +1,25 @@
 """基金数据批量采集与增量更新。"""
 
+import asyncio
 import random
 import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import List, Optional, Tuple
 
-from .fetcher import fetch_fund_list, fetch_fund_full_history, fetch_fund_list_refresh
+from .fetcher import (
+    fetch_fund_list,
+    fetch_fund_full_history,
+    fetch_fund_list_refresh,
+    fetch_fund_manager,
+    fetch_fund_holdings,
+)
 from .storage import FundStorage
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_CONCURRENCY = 5
 
 
 @dataclass
@@ -18,6 +27,8 @@ class FundCollectResult:
     total_funds: int = 0
     success_count: int = 0
     nav_rows_inserted: int = 0
+    manager_rows_inserted: int = 0
+    holding_rows_inserted: int = 0
     fail_list: List[Tuple[str, str]] = field(default_factory=list)
     elapsed_seconds: float = 0.0
 
@@ -29,7 +40,7 @@ class FundCollector:
     用法:
         storage = FundStorage(Path("data/database/quant.db"))
         collector = FundCollector(storage, lookback_years=2)
-        result = collector.run()
+        result = asyncio.run(collector.run())
     """
 
     storage: FundStorage
@@ -37,14 +48,16 @@ class FundCollector:
     request_delay_seconds: float = 0.5
     progress_every: int = 20
     max_retries: int = 3
+    concurrency: int = DEFAULT_CONCURRENCY
 
-    def run(self) -> FundCollectResult:
+    async def run(self) -> FundCollectResult:
         result = FundCollectResult()
         t0 = time.time()
 
         # 1. 拉基金列表
         logger.info("正在获取基金列表...")
-        funds = fetch_fund_list()
+        async with _new_session() as session:
+            funds = await fetch_fund_list(session)
         result.total_funds = len(funds)
         logger.info("符合条件的基金: %d 只 (股票型/混合型/指数型)", len(funds))
 
@@ -57,60 +70,82 @@ class FundCollector:
         finally:
             conn.close()
 
-        # 3. 截止日期 = today
+        # 3. 并发采集净值
         cutoff = date.today() - timedelta(days=self.lookback_years * 365)
+        sem = asyncio.Semaphore(self.concurrency)
+        completed = 0
 
-        for i, fund in enumerate(funds):
-            code = fund["code"]
-            try:
-                rows = self._fetch_with_retry(code)
-                # 过滤只保留 lookback_years 内的数据
-                rows = [r for r in rows if r["nav_date"] >= str(cutoff)]
-                if not rows:
-                    continue
-
-                conn = self.storage.connect()
+        async def collect_one(fund: dict, session):
+            nonlocal completed
+            async with sem:
+                code = fund["code"]
                 try:
-                    inserted = self.storage.append_nav(conn, rows)
-                    conn.commit()
-                    result.nav_rows_inserted += inserted
+                    nav_rows = await self._fetch_with_retry(code, session)
+                    nav_rows = [r for r in nav_rows if r["nav_date"] >= str(cutoff)]
+
+                    # 基金经理 + 重仓股
+                    managers = await fetch_fund_manager(code, session)
+                    report_date, holdings = await fetch_fund_holdings(code, session)
+
+                    nav_ins = mgr_ins = hld_ins = 0
+                    conn = self.storage.connect()
+                    try:
+                        if nav_rows:
+                            nav_ins = self.storage.append_nav(conn, nav_rows)
+                        if managers:
+                            mgr_ins = self.storage.upsert_fund_managers(conn, code, managers)
+                        if holdings:
+                            hld_ins = self.storage.upsert_fund_holdings(conn, code, report_date, holdings)
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    return (nav_ins, mgr_ins, hld_ins)
+                except Exception as e:
+                    result.fail_list.append((code, str(e)))
+                    logger.warning("采集失败 %s %s: %s", code, fund["name"], e)
+                    return (0, 0, 0)
                 finally:
-                    conn.close()
+                    completed += 1
+                    if self.progress_every and completed % self.progress_every == 0:
+                        logger.info("进度: %d/%d", completed, result.total_funds)
 
-                result.success_count += 1
+        async with _new_session() as session:
+            tasks = [collect_one(f, session) for f in funds]
+            all_results = await asyncio.gather(*tasks)
 
-                if self.progress_every and (i + 1) % self.progress_every == 0:
-                    logger.info("进度: %d/%d (已写入 %d 条净值)", i + 1, result.total_funds, result.nav_rows_inserted)
-            except Exception as e:
-                result.fail_list.append((code, str(e)))
-                logger.warning("采集失败 %s %s: %s", code, fund["name"], e)
-
-            time.sleep(self._jitter_delay())
-
+        result.nav_rows_inserted = sum(r[0] for r in all_results)
+        result.manager_rows_inserted = sum(r[1] for r in all_results)
+        result.holding_rows_inserted = sum(r[2] for r in all_results)
+        result.success_count = result.total_funds - len(result.fail_list)
         result.elapsed_seconds = round(time.time() - t0, 1)
         logger.info(
-            "采集完成: 成功 %d/%d, 写入 %d 条净值, 失败 %d, 耗时 %.1fs",
+            "采集完成: 成功 %d/%d, 净值 %d 条, 经理 %d 条, 持仓 %d 条, 失败 %d, 耗时 %.1fs",
             result.success_count, result.total_funds,
-            result.nav_rows_inserted, len(result.fail_list), result.elapsed_seconds,
+            result.nav_rows_inserted, result.manager_rows_inserted,
+            result.holding_rows_inserted, len(result.fail_list), result.elapsed_seconds,
         )
         return result
 
-    def _fetch_with_retry(self, code: str) -> list[dict]:
+    async def _fetch_with_retry(
+        self, code: str, session
+    ) -> list[dict]:
         last_err = None
         for attempt in range(self.max_retries):
             try:
-                return fetch_fund_full_history(code)
+                return await fetch_fund_full_history(code, session)
             except Exception as e:
                 last_err = e
                 if attempt < self.max_retries - 1:
                     wait = self.request_delay_seconds * (attempt + 2)
                     logger.debug("%s 第 %d 次失败, %.1fs 后重试: %s", code, attempt + 1, wait, e)
-                    time.sleep(wait)
+                    await asyncio.sleep(wait)
         raise last_err  # type: ignore[misc]
 
 
-def collect_today_nav(storage: FundStorage, target_date: Optional[str] = None) -> int:
-    """增量采集：只拉当日净值（供 nb_cron 调度）。
+async def collect_today_nav(
+    storage: FundStorage, target_date: Optional[str] = None
+) -> int:
+    """增量采集：只拉当日净值。
 
     Args:
         storage: FundStorage 实例
@@ -124,11 +159,11 @@ def collect_today_nav(storage: FundStorage, target_date: Optional[str] = None) -
 
     logger.info("增量采集开始: %s", target_date)
 
-    # 1. 刷新基金列表（可能有新基金）
+    # 1. 刷新基金列表
     conn = storage.connect()
     try:
         storage.init_schema(conn)
-        fetch_fund_list_refresh(conn)
+        await fetch_fund_list_refresh(conn)
         conn.commit()
         codes = storage.get_all_codes(conn)
     finally:
@@ -136,43 +171,55 @@ def collect_today_nav(storage: FundStorage, target_date: Optional[str] = None) -
 
     logger.info("待采集基金: %d 只", len(codes))
 
-    total_inserted = 0
-    for i, code in enumerate(codes):
-        try:
-            rows = fetch_fund_full_history(code)
-            # 只保留目标日期
-            today_rows = [r for r in rows if r["nav_date"] == target_date]
-            if not today_rows:
-                continue
+    sem = asyncio.Semaphore(DEFAULT_CONCURRENCY)
 
-            conn = storage.connect()
+    async def collect_one(code: str, session):
+        async with sem:
             try:
-                inserted = storage.append_nav(conn, today_rows)
-                conn.commit()
-                total_inserted += inserted
-            finally:
-                conn.close()
+                rows = await fetch_fund_full_history(code, session)
+                today_rows = [r for r in rows if r["nav_date"] == target_date]
+                if not today_rows:
+                    return 0
 
-            time.sleep(0.3)  # 增量模式请求间隔更短
+                conn = storage.connect()
+                try:
+                    inserted = storage.append_nav(conn, today_rows)
+                    conn.commit()
+                    return inserted
+                finally:
+                    conn.close()
+            except Exception as e:
+                logger.warning("增量采集失败 %s: %s", code, e)
+                return 0
 
-        except Exception as e:
-            logger.warning("增量采集失败 %s: %s", code, e)
+    async with _new_session() as session:
+        results = await asyncio.gather(*[collect_one(c, session) for c in codes])
 
-        if (i + 1) % 200 == 0:
-            logger.info("增量进度: %d/%d (已写入 %d 条)", i + 1, len(codes), total_inserted)
-
+    total_inserted = sum(results)
     logger.info("增量采集完成: 写入 %d 条净值记录", total_inserted)
     return total_inserted
 
 
-def refresh_fund_list(storage: FundStorage) -> int:
-    """刷新基金列表（供 nb_cron 周调度）。"""
+async def refresh_fund_list(storage: FundStorage) -> int:
+    """刷新基金列表。"""
     conn = storage.connect()
     try:
         storage.init_schema(conn)
-        count = fetch_fund_list_refresh(conn)
+        count = await fetch_fund_list_refresh(conn)
         conn.commit()
         logger.info("基金列表刷新完成: %d 只基金", count)
         return count
     finally:
         conn.close()
+
+
+def _new_session():
+    """为每轮采集创建一个共享的 ClientSession，复用 TCP 连接。"""
+    import aiohttp
+    return aiohttp.ClientSession(
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0",
+            "Referer": "https://fund.eastmoney.com/",
+        },
+        timeout=aiohttp.ClientTimeout(total=30),
+    )
