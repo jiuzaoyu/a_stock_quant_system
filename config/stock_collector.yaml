@@ -1,0 +1,21 @@
+# 股票数据采集器配置
+stock_collector:
+  database: "data/database/quant.db"
+
+  # K线周期: 4=日线, 5=周线, 6=月线, 9=15分钟, 10=30分钟, 11=60分钟
+  kline_category: 4
+
+  # 回溯年数
+  lookback_years: 2
+
+  # 请求间隔 (秒), 单只股票
+  request_delay_seconds: 0.3
+
+  # 进度打印间隔 (只)
+  progress_every: 50
+
+  # 失败重试次数
+  max_retries: 3
+
+  # 并发线程数
+  concurrency: 5
