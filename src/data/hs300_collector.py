@@ -3,7 +3,6 @@
 import re
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Optional, Tuple
 
 import akshare as ak
@@ -36,14 +35,13 @@ class CollectResult:
 
 class HS300DailyCollector:
     """
-    获取沪深300成分股列表，逐只拉取日线并写入 SQLite。
+    获取沪深300成分股列表，逐只拉取日线并写入 PostgreSQL。
 
     职责：数据采集与入库（不属于策略/回测层）。
     """
 
     def __init__(
         self,
-        db_path: Path,
         start_date: str = "20190101",
         end_date: str = "20241231",
         adjust: str = "qfq",
@@ -53,7 +51,7 @@ class HS300DailyCollector:
         hist_source: str = "auto",
         max_retries: int = 3,
     ):
-        self.storage = DailyStorage(db_path)
+        self.storage = DailyStorage()
         self.start_date = start_date
         self.end_date = end_date
         self.adjust = adjust
@@ -197,19 +195,16 @@ class HS300DailyCollector:
 
     def run(self, stock_list: Optional[List[str]] = None) -> CollectResult:
         """
-        执行全量采集：建表 → 逐只入库 → 建索引 → 返回统计。
+        执行全量采集：建表 → 逐只入库 → 返回统计。
         """
         stock_list = stock_list or self.fetch_constituents()
         result = CollectResult()
         conn = self.storage.connect()
-        print(1111111111111)
         try:
             self.storage.init_schema(conn)
             for i, code in enumerate(stock_list):
                 try:
-                    print(code)
                     df = self.fetch_one(code)
-                    print(222222222222)
                     self.storage.delete_symbol(conn, code)
                     self.storage.append_daily(conn, df)
                     conn.commit()
@@ -222,5 +217,5 @@ class HS300DailyCollector:
                 time.sleep(self.request_delay_seconds)
             self.storage.init_schema(conn)
         finally:
-            conn.close()
+            self.storage.return_conn(conn)
         return result

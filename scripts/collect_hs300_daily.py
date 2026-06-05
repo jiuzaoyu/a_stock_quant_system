@@ -5,7 +5,7 @@
     python scripts/collect_hs300_daily.py
 
 逻辑实现在 src/data/hs300_collector.py，配置见 config/base.yaml → data.hs300_collector
-数据库默认: data/database/quant.db（paths.database）
+数据库连接: config/.env → DATABASE_URL
 """
 
 import sys
@@ -29,12 +29,9 @@ def main() -> None:
         level=cfg["base"]["logging"]["level"],
         log_file=ROOT / cfg["base"]["logging"]["file"],
     )
-    paths = cfg["base"]["paths"]
     col_cfg = cfg["base"]["data"]["hs300_collector"]
 
-    db_path = ROOT / paths["database"]
     collector = HS300DailyCollector(
-        db_path=db_path,
         start_date=col_cfg["start_date"],
         end_date=col_cfg["end_date"],
         adjust=col_cfg["adjust"],
@@ -45,10 +42,10 @@ def main() -> None:
         max_retries=col_cfg.get("max_retries", 3),
     )
 
-    logger.info("开始采集，数据库: %s", db_path)
+    logger.info("开始采集沪深300日线数据")
     result = collector.run()
 
-    storage = DailyStorage(db_path)
+    storage = DailyStorage()
     summary = storage.quality_summary()
     logger.info(
         "完成: 成功 %d, 失败 %d",

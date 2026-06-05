@@ -29,8 +29,7 @@ def main():
 
     setup_logging(level="INFO", log_file=ROOT / "logs" / "fund_collector.log")
 
-    db_path = ROOT / fund_cfg["database"]
-    storage = FundStorage(db_path)
+    storage = FundStorage()
 
     collector = FundCollector(
         storage=storage,
@@ -40,7 +39,7 @@ def main():
         max_retries=fund_cfg.get("max_retries", 3),
     )
 
-    logger.info("开始全量采集, 数据库: %s, 回溯: %d年", db_path, collector.lookback_years)
+    logger.info("开始全量采集, 回溯: %d年", collector.lookback_years)
     result = asyncio.run(collector.run())
 
     summary = storage.quality_summary()

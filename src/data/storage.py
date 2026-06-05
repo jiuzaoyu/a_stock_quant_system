@@ -1,10 +1,10 @@
-"""SQLite 行情存储：建表、索引、质量检查。"""
+"""PostgreSQL 行情存储：建表、索引、质量检查。"""
 
-import sqlite3
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import pandas as pd
+
+from ..utils.database import get_connection, return_connection
 
 DAILY_TABLE = "daily"
 
@@ -29,35 +29,55 @@ CREATE INDEX IF NOT EXISTS idx_tscode_date
 ON {DAILY_TABLE}(ts_code, trade_date)
 """
 
+# ---- 字段注释 ----
+DAILY_COMMENTS = [
+    (f"TABLE {DAILY_TABLE}", "沪深300日线行情数据"),
+    (f"{DAILY_TABLE}.ts_code", "股票代码，如 000001"),
+    (f"{DAILY_TABLE}.trade_date", "交易日期 YYYY-MM-DD"),
+    (f"{DAILY_TABLE}.open", "开盘价"),
+    (f"{DAILY_TABLE}.high", "最高价"),
+    (f"{DAILY_TABLE}.low", "最低价"),
+    (f"{DAILY_TABLE}.close", "收盘价"),
+    (f"{DAILY_TABLE}.volume", "成交量（手）"),
+    (f"{DAILY_TABLE}.amount", "成交额（元）"),
+    (f"{DAILY_TABLE}.pct_change", "涨跌幅（%）"),
+    (f"{DAILY_TABLE}.turnover", "换手率（%）"),
+]
+
 
 class DailyStorage:
-    """沪深300等批量日线数据的本地 SQLite 仓库。"""
+    """沪深300等批量日线数据的 PostgreSQL 仓库。"""
 
-    def __init__(self, db_path: Path):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self):
+        pass
 
-    def connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.db_path)
+    def connect(self):
+        """从连接池获取一个连接。调用方负责归还。"""
+        return get_connection()
 
-    def init_schema(self, conn: Optional[sqlite3.Connection] = None) -> None:
+    def init_schema(self, conn=None) -> None:
         own = conn is None
         conn = conn or self.connect()
         try:
-            conn.execute(SCHEMA_SQL)
-            conn.execute(INDEX_SQL)
+            with conn.cursor() as cur:
+                cur.execute(SCHEMA_SQL)
+                cur.execute(INDEX_SQL)
+                for obj, desc in DAILY_COMMENTS:
+                    prefix = "" if obj.startswith("TABLE ") else "COLUMN "
+                    cur.execute(f"COMMENT ON {prefix}{obj} IS %s", (desc,))
             conn.commit()
         finally:
             if own:
-                conn.close()
+                return_connection(conn)
 
-    def delete_symbol(self, conn: sqlite3.Connection, ts_code: str) -> None:
-        conn.execute(f"DELETE FROM {DAILY_TABLE} WHERE ts_code = ?", (ts_code,))
+    def delete_symbol(self, conn, ts_code: str) -> None:
+        with conn.cursor() as cur:
+            cur.execute(f"DELETE FROM {DAILY_TABLE} WHERE ts_code = %s", (ts_code,))
 
-    def append_daily(self, conn: sqlite3.Connection, df: pd.DataFrame) -> None:
+    def append_daily(self, conn, df: pd.DataFrame) -> None:
         df.to_sql(DAILY_TABLE, conn, if_exists="append", index=False)
 
-    def quality_summary(self, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
+    def quality_summary(self, conn=None) -> Dict[str, Any]:
         own = conn is None
         conn = conn or self.connect()
         try:
@@ -77,4 +97,4 @@ class DailyStorage:
             }
         finally:
             if own:
-                conn.close()
+                return_connection(conn)

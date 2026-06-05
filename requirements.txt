@@ -39,6 +39,9 @@ pyyaml
 # 测试
 pytest>=8.0
 
+# 数据库
+psycopg2-binary>=2.9
+
 # 消息队列
 redis>=5.0.0
 

@@ -34,10 +34,10 @@ class StockCollectResult:
 
 @dataclass
 class StockCollector:
-    """批量采集A股日K线 + 估值数据并写入 SQLite。
+    """批量采集A股日K线 + 估值数据并写入 PostgreSQL。
 
     用法:
-        storage = StockStorage(Path("data/database/stock.db"))
+        storage = StockStorage()
         collector = StockCollector(storage, lookback_years=2)
         collector.run()
     """
@@ -67,7 +67,7 @@ class StockCollector:
             self.storage.upsert_stock_info(conn, stocks)
             conn.commit()
         finally:
-            conn.close()
+            self.storage.return_conn(conn)
 
         codes = [s["code"] for s in stocks]
         cutoff = date.today() - timedelta(days=self.lookback_years * 365)
@@ -91,7 +91,7 @@ class StockCollector:
                             daily_ins = self.storage.append_daily(conn2, kline_rows)
                         conn2.commit()
                     finally:
-                        conn2.close()
+                        self.storage.return_conn(conn2)
                     return (code, daily_ins, None)
                 except Exception as e:
                     if attempt < self.max_retries - 1:
@@ -129,7 +129,7 @@ class StockCollector:
                 result.valuation_rows_inserted = self.storage.append_valuation(conn, val_records)
             conn.commit()
         finally:
-            conn.close()
+            self.storage.return_conn(conn)
 
         result.elapsed_seconds = round(time.time() - t0, 1)
         logger.info(
@@ -167,7 +167,7 @@ def collect_today_daily(
         conn.commit()
         codes = storage.get_all_codes(conn)
     finally:
-        conn.close()
+        storage.return_conn(conn)
 
     logger.info("待采集股票: %d 只", len(codes))
     total_inserted = 0
@@ -186,7 +186,7 @@ def collect_today_daily(
                         total_inserted += storage.append_daily(conn2, today_rows)
                         conn2.commit()
                     finally:
-                        conn2.close()
+                        storage.return_conn(conn2)
             except Exception as e:
                 logger.warning("增量采集失败 %s: %s", futures[future], e)
 
@@ -200,7 +200,7 @@ def collect_today_daily(
             storage.append_valuation(conn, val_today)
             conn.commit()
         finally:
-            conn.close()
+            storage.return_conn(conn)
 
     logger.info("增量采集完成: 写入 %d 条K线记录, %d 条估值记录",
                 total_inserted, len(val_today))
@@ -218,4 +218,4 @@ def refresh_stock_list(storage: StockStorage) -> int:
         logger.info("股票列表刷新完成: %d 只", len(stocks))
         return count
     finally:
-        conn.close()
+        storage.return_conn(conn)

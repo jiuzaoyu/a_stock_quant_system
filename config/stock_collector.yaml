@@ -1,6 +1,6 @@
 # 股票数据采集器配置
+# 数据库连接: config/.env → DATABASE_URL
 stock_collector:
-  database: "data/database/quant.db"
 
   # K线周期: 4=日线, 5=周线, 6=月线, 9=15分钟, 10=30分钟, 11=60分钟
   kline_category: 4

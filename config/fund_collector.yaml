@@ -1,6 +1,6 @@
 # 基金数据采集器配置
+# 数据库连接: config/.env → DATABASE_URL
 fund_collector:
-  database: "data/database/quant.db"
 
   target_fund_types:
     - "股票型"

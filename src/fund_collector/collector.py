@@ -35,10 +35,10 @@ class FundCollectResult:
 
 @dataclass
 class FundCollector:
-    """批量采集基金历史净值并写入 SQLite。
+    """批量采集基金历史净值并写入 PostgreSQL。
 
     用法:
-        storage = FundStorage(Path("data/database/quant.db"))
+        storage = FundStorage()
         collector = FundCollector(storage, lookback_years=2)
         result = asyncio.run(collector.run())
     """
@@ -68,7 +68,7 @@ class FundCollector:
             self.storage.upsert_fund_info(conn, funds)
             conn.commit()
         finally:
-            conn.close()
+            self.storage.return_conn(conn)
 
         # 3. 并发采集净值
         cutoff = date.today() - timedelta(days=self.lookback_years * 365)
@@ -88,17 +88,17 @@ class FundCollector:
                     report_date, holdings = await fetch_fund_holdings(code, session)
 
                     nav_ins = mgr_ins = hld_ins = 0
-                    conn = self.storage.connect()
+                    conn2 = self.storage.connect()
                     try:
                         if nav_rows:
-                            nav_ins = self.storage.append_nav(conn, nav_rows)
+                            nav_ins = self.storage.append_nav(conn2, nav_rows)
                         if managers:
-                            mgr_ins = self.storage.upsert_fund_managers(conn, code, managers)
+                            mgr_ins = self.storage.upsert_fund_managers(conn2, code, managers)
                         if holdings:
-                            hld_ins = self.storage.upsert_fund_holdings(conn, code, report_date, holdings)
-                        conn.commit()
+                            hld_ins = self.storage.upsert_fund_holdings(conn2, code, report_date, holdings)
+                        conn2.commit()
                     finally:
-                        conn.close()
+                        self.storage.return_conn(conn2)
                     return (nav_ins, mgr_ins, hld_ins)
                 except Exception as e:
                     result.fail_list.append((code, str(e)))
@@ -167,7 +167,7 @@ async def collect_today_nav(
         conn.commit()
         codes = storage.get_all_codes(conn)
     finally:
-        conn.close()
+        storage.return_conn(conn)
 
     logger.info("待采集基金: %d 只", len(codes))
 
@@ -181,13 +181,13 @@ async def collect_today_nav(
                 if not today_rows:
                     return 0
 
-                conn = storage.connect()
+                conn2 = storage.connect()
                 try:
-                    inserted = storage.append_nav(conn, today_rows)
-                    conn.commit()
+                    inserted = storage.append_nav(conn2, today_rows)
+                    conn2.commit()
                     return inserted
                 finally:
-                    conn.close()
+                    storage.return_conn(conn2)
             except Exception as e:
                 logger.warning("增量采集失败 %s: %s", code, e)
                 return 0
@@ -210,7 +210,7 @@ async def refresh_fund_list(storage: FundStorage) -> int:
         logger.info("基金列表刷新完成: %d 只基金", count)
         return count
     finally:
-        conn.close()
+        storage.return_conn(conn)
 
 
 def _new_session():

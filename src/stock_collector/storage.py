@@ -1,53 +1,18 @@
 """
-SQLite 股票数据存储：建表、写入、质量检查。
+PostgreSQL 股票数据存储：建表、写入、质量检查。
 
 数据表一览
 ==========
 stock_info        股票基本信息（全量A股列表快照）
 stock_daily       日K线数据（OHLCV）
 stock_valuation   估值数据（PE/PB/市值/换手率等，来自腾讯财经）
-
-stock_info 字段说明
--------------------
-code         TEXT PK   股票代码，6位数字，如 "688017"
-name         TEXT      股票名称，如 "绿的谐波"
-market       TEXT      市场: sh(沪) / sz(深) / bj(北)
-created_at   TEXT      记录首次入库时间
-updated_at   TEXT      记录最近更新时间
-
-stock_daily 字段说明
---------------------
-code         TEXT      股票代码
-trade_date   TEXT      交易日期 YYYY-MM-DD
-open         REAL      开盘价
-high         REAL      最高价
-low          REAL      最低价
-close        REAL      收盘价
-volume       REAL      成交量(手)
-amount       REAL      成交额(元)
-PK: (code, trade_date)
-
-stock_valuation 字段说明
-------------------------
-code              TEXT    股票代码
-trade_date        TEXT    交易日期 YYYY-MM-DD
-pe_ttm            REAL    市盈率(TTM)
-pe_static         REAL    市盈率(静态)
-pb                REAL    市净率
-mcap_yi           REAL    总市值(亿元)
-float_mcap_yi     REAL    流通市值(亿元)
-turnover_pct      REAL    换手率(%)
-vol_ratio         REAL    量比
-amplitude_pct     REAL    振幅(%)
-limit_up          REAL    涨停价
-limit_down        REAL    跌停价
-change_pct        REAL    涨跌幅(%)
-PK: (code, trade_date)
 """
 
-import sqlite3
-from pathlib import Path
 from typing import Any, Dict, Optional
+
+from psycopg2.extras import execute_values
+
+from ..utils.database import get_connection, return_connection, sanitize
 
 STOCK_INFO_TABLE = "stock_info"
 STOCK_DAILY_TABLE = "stock_daily"
@@ -58,8 +23,8 @@ CREATE TABLE IF NOT EXISTS {STOCK_INFO_TABLE} (
     code TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     market TEXT NOT NULL DEFAULT '',
-    created_at TEXT DEFAULT (datetime('now', 'localtime')),
-    updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 )
 """
 
@@ -121,121 +86,178 @@ CREATE INDEX IF NOT EXISTS idx_stock_valuation_date
 ON {STOCK_VALUATION_TABLE}(trade_date)
 """
 
+# ---- 字段注释 ----
+STOCK_COMMENTS = [
+    # stock_info
+    (f"TABLE {STOCK_INFO_TABLE}", "A股股票基本信息（全量列表快照）"),
+    (f"{STOCK_INFO_TABLE}.code", "股票代码，6位数字，如 688017"),
+    (f"{STOCK_INFO_TABLE}.name", "股票名称，如 绿的谐波"),
+    (f"{STOCK_INFO_TABLE}.market", "市场: sh(沪) / sz(深) / bj(北)"),
+    (f"{STOCK_INFO_TABLE}.created_at", "记录首次入库时间"),
+    (f"{STOCK_INFO_TABLE}.updated_at", "记录最近更新时间"),
+    # stock_daily
+    (f"TABLE {STOCK_DAILY_TABLE}", "A股日K线数据（OHLCV）"),
+    (f"{STOCK_DAILY_TABLE}.code", "股票代码"),
+    (f"{STOCK_DAILY_TABLE}.trade_date", "交易日期 YYYY-MM-DD"),
+    (f"{STOCK_DAILY_TABLE}.open", "开盘价"),
+    (f"{STOCK_DAILY_TABLE}.high", "最高价"),
+    (f"{STOCK_DAILY_TABLE}.low", "最低价"),
+    (f"{STOCK_DAILY_TABLE}.close", "收盘价"),
+    (f"{STOCK_DAILY_TABLE}.volume", "成交量（手）"),
+    (f"{STOCK_DAILY_TABLE}.amount", "成交额（元）"),
+    # stock_valuation
+    (f"TABLE {STOCK_VALUATION_TABLE}", "A股估值数据（来源：腾讯财经）"),
+    (f"{STOCK_VALUATION_TABLE}.code", "股票代码"),
+    (f"{STOCK_VALUATION_TABLE}.trade_date", "交易日期 YYYY-MM-DD"),
+    (f"{STOCK_VALUATION_TABLE}.pe_ttm", "市盈率 TTM"),
+    (f"{STOCK_VALUATION_TABLE}.pe_static", "市盈率 静态"),
+    (f"{STOCK_VALUATION_TABLE}.pb", "市净率"),
+    (f"{STOCK_VALUATION_TABLE}.mcap_yi", "总市值（亿元）"),
+    (f"{STOCK_VALUATION_TABLE}.float_mcap_yi", "流通市值（亿元）"),
+    (f"{STOCK_VALUATION_TABLE}.turnover_pct", "换手率（%）"),
+    (f"{STOCK_VALUATION_TABLE}.vol_ratio", "量比"),
+    (f"{STOCK_VALUATION_TABLE}.amplitude_pct", "振幅（%）"),
+    (f"{STOCK_VALUATION_TABLE}.limit_up", "涨停价"),
+    (f"{STOCK_VALUATION_TABLE}.limit_down", "跌停价"),
+    (f"{STOCK_VALUATION_TABLE}.change_pct", "涨跌幅（%）"),
+]
+
 
 class StockStorage:
-    """股票数据本地 SQLite 仓库，管理 stock_info / stock_daily / stock_valuation 三张表。
+    """股票数据 PostgreSQL 仓库，管理 stock_info / stock_daily / stock_valuation 三张表。
 
     用法:
-        storage = StockStorage(Path("data/database/stock.db"))
+        storage = StockStorage()
         conn = storage.connect()
         storage.init_schema(conn)
         storage.upsert_stock_info(conn, stock_list)
         storage.append_daily(conn, daily_rows)
         storage.append_valuation(conn, valuation_rows)
         conn.commit()
-        conn.close()
+        storage.return_conn(conn)
     """
 
-    def __init__(self, db_path: Path):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self):
+        pass
 
-    def connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db_path))
+    def connect(self):
+        return get_connection()
 
-    def init_schema(self, conn: Optional[sqlite3.Connection] = None) -> None:
+    def return_conn(self, conn) -> None:
+        return_connection(conn)
+
+    def init_schema(self, conn=None) -> None:
         own = conn is None
         conn = conn or self.connect()
         try:
-            conn.execute(STOCK_INFO_SCHEMA)
-            conn.execute(STOCK_DAILY_SCHEMA)
-            conn.execute(STOCK_VALUATION_SCHEMA)
-            conn.execute(INDEX_INFO_MARKET)
-            conn.execute(INDEX_DAILY_CODE_DATE)
-            conn.execute(INDEX_DAILY_DATE)
-            conn.execute(INDEX_VALUATION_CODE_DATE)
-            conn.execute(INDEX_VALUATION_DATE)
+            with conn.cursor() as cur:
+                cur.execute(STOCK_INFO_SCHEMA)
+                cur.execute(STOCK_DAILY_SCHEMA)
+                cur.execute(STOCK_VALUATION_SCHEMA)
+                cur.execute(INDEX_INFO_MARKET)
+                cur.execute(INDEX_DAILY_CODE_DATE)
+                cur.execute(INDEX_DAILY_DATE)
+                cur.execute(INDEX_VALUATION_CODE_DATE)
+                cur.execute(INDEX_VALUATION_DATE)
+                for obj, desc in STOCK_COMMENTS:
+                    prefix = "" if obj.startswith("TABLE ") else "COLUMN "
+                    cur.execute(f"COMMENT ON {prefix}{obj} IS %s", (desc,))
             conn.commit()
         finally:
             if own:
-                conn.close()
+                return_connection(conn)
 
-    def upsert_stock_info(self, conn: sqlite3.Connection, records: list[dict]) -> int:
-        """批量写入股票基本信息（存在则更新 name/market/updated_at）。"""
+    def upsert_stock_info(self, conn, records: list[dict]) -> int:
+        """批量写入股票基本信息（存在则更新）。"""
         sql = f"""
         INSERT INTO {STOCK_INFO_TABLE} (code, name, market)
-        VALUES (:code, :name, :market)
+        VALUES %s
         ON CONFLICT(code) DO UPDATE SET
             name = excluded.name,
             market = excluded.market,
-            updated_at = datetime('now', 'localtime')
+            updated_at = NOW()
         """
-        conn.executemany(sql, records)
-        return conn.total_changes
+        tuples = [(sanitize(r["code"]), sanitize(r["name"]), sanitize(r.get("market", ""))) for r in records]
+        tuples = list({t[0]: t for t in tuples}.values())
+        with conn.cursor() as cur:
+            execute_values(cur, sql, tuples, page_size=1000)
+            return cur.rowcount
 
-    def append_daily(self, conn: sqlite3.Connection, records: list[dict]) -> int:
+    def append_daily(self, conn, records: list[dict]) -> int:
         """批量追加日K线记录（已存在的主键自动忽略）。"""
+        if not records:
+            return 0
         sql = f"""
-        INSERT OR IGNORE INTO {STOCK_DAILY_TABLE}
+        INSERT INTO {STOCK_DAILY_TABLE}
             (code, trade_date, open, high, low, close, volume, amount)
-        VALUES (:code, :trade_date, :open, :high, :low, :close, :volume, :amount)
+        VALUES %s
+        ON CONFLICT (code, trade_date) DO NOTHING
         """
-        before = conn.total_changes
-        conn.executemany(sql, records)
-        return conn.total_changes - before
+        tuples = [
+            (sanitize(r["code"]), sanitize(r["trade_date"]), r.get("open"), r.get("high"),
+             r.get("low"), r.get("close"), r.get("volume"), r.get("amount"))
+            for r in records
+        ]
+        with conn.cursor() as cur:
+            execute_values(cur, sql, tuples, page_size=1000)
+            return cur.rowcount
 
-    def append_valuation(self, conn: sqlite3.Connection, records: list[dict]) -> int:
+    def append_valuation(self, conn, records: list[dict]) -> int:
         """批量追加估值记录（已存在的主键自动忽略）。"""
+        if not records:
+            return 0
         sql = f"""
-        INSERT OR IGNORE INTO {STOCK_VALUATION_TABLE}
+        INSERT INTO {STOCK_VALUATION_TABLE}
             (code, trade_date, pe_ttm, pe_static, pb, mcap_yi, float_mcap_yi,
              turnover_pct, vol_ratio, amplitude_pct, limit_up, limit_down, change_pct)
-        VALUES (:code, :trade_date, :pe_ttm, :pe_static, :pb, :mcap_yi, :float_mcap_yi,
-                :turnover_pct, :vol_ratio, :amplitude_pct, :limit_up, :limit_down, :change_pct)
+        VALUES %s
+        ON CONFLICT (code, trade_date) DO NOTHING
         """
-        before = conn.total_changes
-        conn.executemany(sql, records)
-        return conn.total_changes - before
+        tuples = [
+            (sanitize(r["code"]), sanitize(r["trade_date"]), r.get("pe_ttm"), r.get("pe_static"),
+             r.get("pb"), r.get("mcap_yi"), r.get("float_mcap_yi"),
+             r.get("turnover_pct"), r.get("vol_ratio"), r.get("amplitude_pct"),
+             r.get("limit_up"), r.get("limit_down"), r.get("change_pct"))
+            for r in records
+        ]
+        with conn.cursor() as cur:
+            execute_values(cur, sql, tuples, page_size=1000)
+            return cur.rowcount
 
-    def get_all_codes(self, conn: Optional[sqlite3.Connection] = None) -> list[str]:
+    def get_all_codes(self, conn=None) -> list[str]:
         own = conn is None
         conn = conn or self.connect()
         try:
-            rows = conn.execute(f"SELECT code FROM {STOCK_INFO_TABLE}").fetchall()
-            return [r[0] for r in rows]
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT code FROM {STOCK_INFO_TABLE}")
+                return [r[0] for r in cur.fetchall()]
         finally:
             if own:
-                conn.close()
+                return_connection(conn)
 
-    def get_last_trade_date(
-        self, conn: sqlite3.Connection, code: str
-    ) -> Optional[str]:
-        row = conn.execute(
-            f"SELECT MAX(trade_date) FROM {STOCK_DAILY_TABLE} WHERE code = ?", (code,)
-        ).fetchone()
-        return row[0] if row else None
+    def get_last_trade_date(self, conn, code: str) -> Optional[str]:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT MAX(trade_date) FROM {STOCK_DAILY_TABLE} WHERE code = %s", (code,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
-    def quality_summary(
-        self, conn: Optional[sqlite3.Connection] = None
-    ) -> Dict[str, Any]:
+    def quality_summary(self, conn=None) -> Dict[str, Any]:
         own = conn is None
         conn = conn or self.connect()
         try:
-            stocks = conn.execute(
-                f"SELECT COUNT(*) FROM {STOCK_INFO_TABLE}"
-            ).fetchone()[0]
-            daily_rows = conn.execute(
-                f"SELECT COUNT(*) FROM {STOCK_DAILY_TABLE}"
-            ).fetchone()[0]
-            dr = conn.execute(
-                f"SELECT MIN(trade_date), MAX(trade_date) FROM {STOCK_DAILY_TABLE}"
-            ).fetchone()
-            val_rows = conn.execute(
-                f"SELECT COUNT(*) FROM {STOCK_VALUATION_TABLE}"
-            ).fetchone()[0]
-            vr = conn.execute(
-                f"SELECT MIN(trade_date), MAX(trade_date) FROM {STOCK_VALUATION_TABLE}"
-            ).fetchone()
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) FROM {STOCK_INFO_TABLE}")
+                stocks = cur.fetchone()[0]
+                cur.execute(f"SELECT COUNT(*) FROM {STOCK_DAILY_TABLE}")
+                daily_rows = cur.fetchone()[0]
+                cur.execute(f"SELECT MIN(trade_date), MAX(trade_date) FROM {STOCK_DAILY_TABLE}")
+                dr = cur.fetchone()
+                cur.execute(f"SELECT COUNT(*) FROM {STOCK_VALUATION_TABLE}")
+                val_rows = cur.fetchone()[0]
+                cur.execute(f"SELECT MIN(trade_date), MAX(trade_date) FROM {STOCK_VALUATION_TABLE}")
+                vr = cur.fetchone()
             return {
                 "total_stocks": stocks,
                 "total_daily_rows": daily_rows,
@@ -247,4 +269,4 @@ class StockStorage:
             }
         finally:
             if own:
-                conn.close()
+                return_connection(conn)

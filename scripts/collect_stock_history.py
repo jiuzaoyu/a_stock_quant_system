@@ -28,8 +28,7 @@ def main():
 
     setup_logging(level="INFO", log_file=ROOT / "logs" / "stock_collector.log")
 
-    db_path = ROOT / stock_cfg["database"]
-    storage = StockStorage(db_path)
+    storage = StockStorage()
 
     collector = StockCollector(
         storage=storage,
@@ -41,7 +40,7 @@ def main():
         concurrency=stock_cfg.get("concurrency", 5),
     )
 
-    logger.info("开始全量采集, 数据库: %s, 回溯: %d年", db_path, collector.lookback_years)
+    logger.info("开始全量采集, 回溯: %d年", collector.lookback_years)
     result = collector.run()
 
     summary = storage.quality_summary()

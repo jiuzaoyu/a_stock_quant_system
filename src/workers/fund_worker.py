@@ -5,21 +5,14 @@ from pathlib import Path
 from redis import Redis
 
 from src.fund_collector import FundStorage, collect_today_nav, refresh_fund_list
-from src.utils.config import load_yaml
 from src.utils.logger import get_logger
 from src.workers.base_worker import BaseWorker
 
 log = get_logger(__name__)
 
-ROOT = Path(__file__).resolve().parents[2]
-
 
 def create_fund_worker(redis_client: Redis, db_path: str | None = None) -> BaseWorker:
-    if db_path is None:
-        cfg = load_yaml(ROOT / "config" / "fund_collector.yaml")
-        db_path = str(ROOT / cfg["fund_collector"]["database"])
-
-    storage = FundStorage(Path(db_path))
+    storage = FundStorage()
     storage.init_schema()
 
     worker = BaseWorker(

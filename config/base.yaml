@@ -9,7 +9,6 @@ paths:
   data_cache: data/cache
   output: output
   logs: logs
-  database: data/database/quant.db
 
 logging:
   level: INFO

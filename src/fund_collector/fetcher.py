@@ -164,10 +164,10 @@ async def fetch_fund_manager(
         result.append({
             "manager_id": m.get("id", ""),
             "name": m.get("name", ""),
-            "star": m.get("star"),
+            "star": _safe_int(m.get("star")),
             "work_time": m.get("workTime"),
             "fund_size": m.get("fundSize"),
-            "power_avr": power.get("avr"),
+            "power_avr": _safe_float(power.get("avr")),
             "power_json": json.dumps(power.get("data", []), ensure_ascii=False),
             "profit_json": profit_json,
         })
@@ -240,21 +240,53 @@ async def fetch_fund_list_refresh(storage_conn) -> int:
     Returns:
         增/更新的基金数
     """
+    from psycopg2.extras import execute_values
+
     funds = await fetch_fund_list()
-    return storage_conn.executemany(
-        """INSERT INTO fund_info (code, name, fund_type, pinyin, pinyin_full)
-           VALUES (:code, :name, :fund_type, :pinyin, :pinyin_full)
-           ON CONFLICT(code) DO UPDATE SET
-               name = excluded.name,
-               fund_type = excluded.fund_type,
-               pinyin = excluded.pinyin,
-               pinyin_full = excluded.pinyin_full,
-               updated_at = datetime('now', 'localtime')""",
-        funds,
-    )
+    sql = """
+        INSERT INTO fund_info (code, name, fund_type, pinyin, pinyin_full)
+        VALUES %s
+        ON CONFLICT(code) DO UPDATE SET
+            name = excluded.name,
+            fund_type = excluded.fund_type,
+            pinyin = excluded.pinyin,
+            pinyin_full = excluded.pinyin_full,
+            updated_at = NOW()
+    """
+    from ..utils.database import sanitize
+
+    tuples = [
+        (sanitize(f["code"]), sanitize(f["name"]), sanitize(f["fund_type"]),
+         sanitize(f.get("pinyin", "")), sanitize(f.get("pinyin_full", "")))
+        for f in funds
+    ]
+    tuples = list({t[0]: t for t in tuples}.values())
+    with storage_conn.cursor() as cur:
+        execute_values(cur, sql, tuples, page_size=1000)
+        return cur.rowcount
 
 
 # ------------------------------------------------------------------ 内部辅助
+
+def _safe_float(value):
+    """将值转为 float，无法转换（如'暂无数据'）时返回 None。"""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _safe_int(value):
+    """将值转为 int，无法转换时返回 None。"""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
 
 async def _get_text(
     session: Optional[aiohttp.ClientSession],
