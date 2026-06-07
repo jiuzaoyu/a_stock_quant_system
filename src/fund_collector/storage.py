@@ -3,10 +3,13 @@ PostgreSQL 基金数据存储：建表、写入、迁移、质量检查。
 
 数据表一览
 ==========
-fund_info      基金基本信息（全量基金列表的快照）
-fund_nav       基金净值历史（单位净值 + 累计净值 + 日增长率）
-fund_manager   基金经理信息（每位经理一条记录，多经理基金对应多条）
-fund_holding   基金重仓股持仓（每季度前十大重仓股）
+fund_info              基金基本信息（全量基金列表的快照）
+fund_nav               基金净值历史（单位净值 + 累计净值 + 日增长率）
+fund_manager           基金经理信息（每位经理一条记录，多经理基金对应多条）
+fund_holding           基金重仓股持仓（每季度前十大重仓股）
+fund_user_holding      用户基金持仓（买入净值、份额、日期等）
+fund_nav_estimation    盘中净值估算快照（每日 14:30）
+fund_user_pnl_summary  用户收益汇总 + 操作建议
 """
 
 from typing import Any, Dict, Optional
@@ -19,6 +22,9 @@ FUND_INFO_TABLE = "fund_info"
 FUND_NAV_TABLE = "fund_nav"
 FUND_MANAGER_TABLE = "fund_manager"
 FUND_HOLDING_TABLE = "fund_holding"
+FUND_USER_HOLDING_TABLE = "fund_user_holding"
+FUND_NAV_ESTIMATION_TABLE = "fund_nav_estimation"
+FUND_USER_PNL_TABLE = "fund_user_pnl_summary"
 
 FUND_INFO_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS {FUND_INFO_TABLE} (
@@ -82,6 +88,59 @@ CREATE TABLE IF NOT EXISTS {FUND_HOLDING_TABLE} (
 )
 """
 
+FUND_USER_HOLDING_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {FUND_USER_HOLDING_TABLE} (
+    id              SERIAL PRIMARY KEY,
+    fund_code       TEXT NOT NULL,
+    fund_name       TEXT,
+    buy_net_value   REAL NOT NULL,
+    shares          REAL NOT NULL,
+    buy_date        TEXT NOT NULL,
+    holding_days    INTEGER DEFAULT 0,
+    industry_sector TEXT,
+    source          TEXT DEFAULT 'ali',
+    is_qdii         BOOLEAN DEFAULT FALSE,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ DEFAULT NOW()
+)
+"""
+
+FUND_NAV_ESTIMATION_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {FUND_NAV_ESTIMATION_TABLE} (
+    id              SERIAL PRIMARY KEY,
+    fund_code       TEXT NOT NULL,
+    trade_date      TEXT NOT NULL,
+    estimate_time   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_nav        REAL,
+    estimated_nav   REAL,
+    estimated_pct   REAL,
+    coverage_pct    REAL,
+    stock_detail    JSONB DEFAULT '{{}}',
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(fund_code, trade_date, estimate_time)
+)
+"""
+
+FUND_USER_PNL_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {FUND_USER_PNL_TABLE} (
+    id              SERIAL PRIMARY KEY,
+    trade_date      TEXT NOT NULL,
+    fund_code       TEXT NOT NULL,
+    buy_net_value   REAL NOT NULL,
+    current_nav     REAL,
+    shares          REAL NOT NULL,
+    cost            REAL NOT NULL,
+    market_value    REAL,
+    total_pnl       REAL,
+    total_pnl_pct   REAL,
+    daily_pnl       REAL,
+    daily_pnl_pct   REAL,
+    suggestion      TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(trade_date, fund_code)
+)
+"""
+
 INDEX_INFO_TYPE = f"""
 CREATE INDEX IF NOT EXISTS idx_fund_info_type
 ON {FUND_INFO_TABLE}(fund_type)
@@ -110,6 +169,26 @@ ON {FUND_HOLDING_TABLE}(code)
 INDEX_HOLDING_DATE = f"""
 CREATE INDEX IF NOT EXISTS idx_fund_holding_date
 ON {FUND_HOLDING_TABLE}(report_date)
+"""
+
+INDEX_USER_HOLDING_CODE = f"""
+CREATE INDEX IF NOT EXISTS idx_fund_user_holding_code
+ON {FUND_USER_HOLDING_TABLE}(fund_code)
+"""
+
+INDEX_NAV_EST_CODE_DATE = f"""
+CREATE INDEX IF NOT EXISTS idx_fund_nav_est_code_date
+ON {FUND_NAV_ESTIMATION_TABLE}(fund_code, trade_date)
+"""
+
+INDEX_USER_PNL_CODE_DATE = f"""
+CREATE INDEX IF NOT EXISTS idx_fund_user_pnl_code_date
+ON {FUND_USER_PNL_TABLE}(fund_code, trade_date)
+"""
+
+INDEX_USER_PNL_DATE = f"""
+CREATE INDEX IF NOT EXISTS idx_fund_user_pnl_date
+ON {FUND_USER_PNL_TABLE}(trade_date)
 """
 
 # ---- 字段注释 ----
@@ -153,6 +232,40 @@ FUND_COMMENTS = [
     (f"{FUND_HOLDING_TABLE}.shares_wan", "持股数（万股）"),
     (f"{FUND_HOLDING_TABLE}.market_cap_wan", "持仓市值（万元）"),
     (f"{FUND_HOLDING_TABLE}.updated_at", "记录最近更新时间"),
+    # fund_user_holding
+    (f"TABLE {FUND_USER_HOLDING_TABLE}", "用户基金持仓"),
+    (f"{FUND_USER_HOLDING_TABLE}.fund_code", "基金代码"),
+    (f"{FUND_USER_HOLDING_TABLE}.fund_name", "基金名称"),
+    (f"{FUND_USER_HOLDING_TABLE}.buy_net_value", "买入净值"),
+    (f"{FUND_USER_HOLDING_TABLE}.shares", "持有份额"),
+    (f"{FUND_USER_HOLDING_TABLE}.buy_date", "买入日期 YYYY-MM-DD"),
+    (f"{FUND_USER_HOLDING_TABLE}.holding_days", "已持有天数"),
+    (f"{FUND_USER_HOLDING_TABLE}.industry_sector", "行业板块"),
+    (f"{FUND_USER_HOLDING_TABLE}.source", "购买渠道"),
+    (f"{FUND_USER_HOLDING_TABLE}.is_qdii", "是否QDII"),
+    # fund_nav_estimation
+    (f"TABLE {FUND_NAV_ESTIMATION_TABLE}", "盘中净值估算快照"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.fund_code", "基金代码"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.trade_date", "交易日期"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.estimate_time", "估算时间"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.last_nav", "上日公布净值"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.estimated_nav", "估算当前净值"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.estimated_pct", "估算涨跌幅(%)"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.coverage_pct", "重仓股覆盖比例(%)"),
+    (f"{FUND_NAV_ESTIMATION_TABLE}.stock_detail", "各重仓股涨跌明细 JSON"),
+    # fund_user_pnl_summary
+    (f"TABLE {FUND_USER_PNL_TABLE}", "用户收益汇总 + 操作建议"),
+    (f"{FUND_USER_PNL_TABLE}.trade_date", "交易日期"),
+    (f"{FUND_USER_PNL_TABLE}.fund_code", "基金代码"),
+    (f"{FUND_USER_PNL_TABLE}.buy_net_value", "买入净值"),
+    (f"{FUND_USER_PNL_TABLE}.current_nav", "当前净值(盘中估算或最新公布)"),
+    (f"{FUND_USER_PNL_TABLE}.cost", "成本 = buy_net_value * shares"),
+    (f"{FUND_USER_PNL_TABLE}.market_value", "市值 = current_nav * shares"),
+    (f"{FUND_USER_PNL_TABLE}.total_pnl", "累计盈亏(金额)"),
+    (f"{FUND_USER_PNL_TABLE}.total_pnl_pct", "累计盈亏(%)"),
+    (f"{FUND_USER_PNL_TABLE}.daily_pnl", "当日盈亏(金额)"),
+    (f"{FUND_USER_PNL_TABLE}.daily_pnl_pct", "当日盈亏(%)"),
+    (f"{FUND_USER_PNL_TABLE}.suggestion", "操作建议: HOLD/BUY/REDUCE/CLEAR"),
 ]
 
 
@@ -195,6 +308,13 @@ class FundStorage:
                 cur.execute(INDEX_MANAGER_CODE)
                 cur.execute(INDEX_HOLDING_CODE)
                 cur.execute(INDEX_HOLDING_DATE)
+                cur.execute(FUND_USER_HOLDING_SCHEMA)
+                cur.execute(FUND_NAV_ESTIMATION_SCHEMA)
+                cur.execute(FUND_USER_PNL_SCHEMA)
+                cur.execute(INDEX_USER_HOLDING_CODE)
+                cur.execute(INDEX_NAV_EST_CODE_DATE)
+                cur.execute(INDEX_USER_PNL_CODE_DATE)
+                cur.execute(INDEX_USER_PNL_DATE)
                 cur.execute(FUND_INFO_MIGRATION1)
                 cur.execute(FUND_INFO_MIGRATION2)
                 for obj, desc in FUND_COMMENTS:
@@ -340,6 +460,189 @@ class FundStorage:
         finally:
             if own:
                 return_connection(conn)
+
+    # ------------------------------------------------------------------
+    # fund_user_holding — 用户持仓
+    # ------------------------------------------------------------------
+
+    def upsert_user_holding(self, conn, records: list[dict]) -> int:
+        """批量写入用户持仓（存在则更新份额和买入净值）。"""
+        if not records:
+            return 0
+        sql = f"""
+        INSERT INTO {FUND_USER_HOLDING_TABLE}
+            (fund_code, fund_name, buy_net_value, shares, buy_date,
+             holding_days, industry_sector, source, is_qdii)
+        VALUES %s
+        ON CONFLICT (id) DO UPDATE SET
+            fund_code = excluded.fund_code,
+            fund_name = excluded.fund_name,
+            buy_net_value = excluded.buy_net_value,
+            shares = excluded.shares,
+            buy_date = excluded.buy_date,
+            holding_days = excluded.holding_days,
+            industry_sector = excluded.industry_sector,
+            source = excluded.source,
+            is_qdii = excluded.is_qdii,
+            updated_at = NOW()
+        """
+        tuples = [
+            (sanitize(r["fund_code"]), sanitize(r.get("fund_name", "")),
+             r["buy_net_value"], r["shares"], sanitize(r["buy_date"]),
+             r.get("holding_days", 0), sanitize(r.get("industry_sector", "")),
+             sanitize(r.get("source", "ali")), r.get("is_qdii", False))
+            for r in records
+        ]
+        with conn.cursor() as cur:
+            execute_values(cur, sql, tuples)
+            return cur.rowcount
+
+    def get_user_holdings(self, conn=None) -> list[dict]:
+        """获取全部用户持仓。"""
+        own = conn is None
+        conn = conn or self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT id, fund_code, fund_name, buy_net_value, shares, "
+                    f"buy_date, holding_days, industry_sector, source, is_qdii "
+                    f"FROM {FUND_USER_HOLDING_TABLE} ORDER BY id"
+                )
+                cols = ["id", "fund_code", "fund_name", "buy_net_value", "shares",
+                        "buy_date", "holding_days", "industry_sector", "source", "is_qdii"]
+                return [dict(zip(cols, row)) for row in cur.fetchall()]
+        finally:
+            if own:
+                return_connection(conn)
+
+    # ------------------------------------------------------------------
+    # fund_nav_estimation — 净值估算快照
+    # ------------------------------------------------------------------
+
+    def insert_nav_estimation(self, conn, records: list[dict]) -> int:
+        """写入净值估算记录。"""
+        if not records:
+            return 0
+        import json as _json
+        sql = f"""
+        INSERT INTO {FUND_NAV_ESTIMATION_TABLE}
+            (fund_code, trade_date, estimate_time, last_nav, estimated_nav,
+             estimated_pct, coverage_pct, stock_detail)
+        VALUES %s
+        ON CONFLICT (fund_code, trade_date, estimate_time) DO NOTHING
+        """
+        tuples = [
+            (sanitize(r["fund_code"]), sanitize(r["trade_date"]),
+             r.get("estimate_time"), r.get("last_nav"), r.get("estimated_nav"),
+             r.get("estimated_pct"), r.get("coverage_pct"),
+             _json.dumps(r.get("stock_detail", {}), ensure_ascii=False))
+            for r in records
+        ]
+        with conn.cursor() as cur:
+            execute_values(cur, sql, tuples)
+            return cur.rowcount
+
+    def get_latest_estimation(self, conn, fund_code: str, trade_date: str) -> dict | None:
+        """获取某基金在指定交易日的最新一次估算记录。"""
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT fund_code, trade_date, estimate_time, last_nav, estimated_nav, "
+                f"estimated_pct, coverage_pct, stock_detail "
+                f"FROM {FUND_NAV_ESTIMATION_TABLE} "
+                f"WHERE fund_code = %s AND trade_date = %s "
+                f"ORDER BY estimate_time DESC LIMIT 1",
+                (fund_code, trade_date),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = ["fund_code", "trade_date", "estimate_time", "last_nav",
+                    "estimated_nav", "estimated_pct", "coverage_pct", "stock_detail"]
+            return dict(zip(cols, row))
+
+    # ------------------------------------------------------------------
+    # fund_user_pnl_summary — 收益汇总
+    # ------------------------------------------------------------------
+
+    def upsert_user_pnl(self, conn, records: list[dict]) -> int:
+        """写入或更新每日收益汇总。"""
+        if not records:
+            return 0
+        sql = f"""
+        INSERT INTO {FUND_USER_PNL_TABLE}
+            (trade_date, fund_code, buy_net_value, current_nav, shares,
+             cost, market_value, total_pnl, total_pnl_pct,
+             daily_pnl, daily_pnl_pct, suggestion)
+        VALUES %s
+        ON CONFLICT (trade_date, fund_code) DO UPDATE SET
+            buy_net_value = excluded.buy_net_value,
+            current_nav = excluded.current_nav,
+            shares = excluded.shares,
+            cost = excluded.cost,
+            market_value = excluded.market_value,
+            total_pnl = excluded.total_pnl,
+            total_pnl_pct = excluded.total_pnl_pct,
+            daily_pnl = excluded.daily_pnl,
+            daily_pnl_pct = excluded.daily_pnl_pct,
+            suggestion = excluded.suggestion
+        """
+        tuples = [
+            (sanitize(r["trade_date"]), sanitize(r["fund_code"]),
+             r["buy_net_value"], r.get("current_nav"), r["shares"],
+             r["cost"], r.get("market_value"), r.get("total_pnl"),
+             r.get("total_pnl_pct"), r.get("daily_pnl"), r.get("daily_pnl_pct"),
+             sanitize(r.get("suggestion", "HOLD")))
+            for r in records
+        ]
+        with conn.cursor() as cur:
+            execute_values(cur, sql, tuples)
+            return cur.rowcount
+
+    def get_user_pnl_by_date(self, conn, trade_date: str) -> list[dict]:
+        """获取指定交易日的收益汇总。"""
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT trade_date, fund_code, buy_net_value, current_nav, shares, "
+                f"cost, market_value, total_pnl, total_pnl_pct, "
+                f"daily_pnl, daily_pnl_pct, suggestion "
+                f"FROM {FUND_USER_PNL_TABLE} WHERE trade_date = %s ORDER BY fund_code",
+                (trade_date,),
+            )
+            cols = ["trade_date", "fund_code", "buy_net_value", "current_nav", "shares",
+                    "cost", "market_value", "total_pnl", "total_pnl_pct",
+                    "daily_pnl", "daily_pnl_pct", "suggestion"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def get_latest_holdings(self, conn, fund_code: str) -> list[dict]:
+        """获取基金最新的重仓股持仓（取最近一个报告期）。"""
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT code, report_date, stock_code, stock_name, rank, nav_pct, "
+                f"shares_wan, market_cap_wan "
+                f"FROM {FUND_HOLDING_TABLE} "
+                f"WHERE code = %s "
+                f"ORDER BY report_date DESC LIMIT 10",
+                (fund_code,),
+            )
+            cols = ["code", "report_date", "stock_code", "stock_name", "rank",
+                    "nav_pct", "shares_wan", "market_cap_wan"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def get_latest_nav(self, conn, fund_code: str) -> dict | None:
+        """获取基金最近一个交易日的净值。"""
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT code, nav_date, unit_nav, accum_nav, daily_growth "
+                f"FROM {FUND_NAV_TABLE} "
+                f"WHERE code = %s "
+                f"ORDER BY nav_date DESC LIMIT 1",
+                (fund_code,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = ["code", "nav_date", "unit_nav", "accum_nav", "daily_growth"]
+            return dict(zip(cols, row))
 
     def quality_summary(self, conn=None) -> Dict[str, Any]:
         own = conn is None

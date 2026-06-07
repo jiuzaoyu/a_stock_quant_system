@@ -1,5 +1,23 @@
 # 项目更新记录
 
+## 0.2.0 版本
+
+### 新增
+
+1. 新增基金持仓追踪与盘中净值估算系统，支持在交易日 14:30 估算基金实时净值变化并生成操作建议
+2. FundStorage 新增 fund_user_holding（用户持仓表）、fund_nav_estimation（盘中净值估算表）、fund_user_pnl_summary（收益汇总表）三张表及相关 CRUD 方法
+3. 新增 src/data/realtime_quote.py，封装腾讯行情 HTTP 接口获取股票实时涨跌幅，支持批量请求和 QDII 代理行情（恒指/纳指期货）
+4. 新增 src/strategy/nav_estimator.py，基于基金重仓股权重 + 股票实时涨跌幅加权计算估算净值，支持 QDII 基金通过期货/指数代理估算
+5. 新增 src/workers/nav_estimation_worker.py，监听 Redis Stream `cron:jobs:nav_estimation` 执行盘中估算，含交易日判断和格式化输出
+6. 新增 scripts/run_nav_estimation.py，支持手动触发净值估算，可选 `--json` / `--csv` 输出
+7. 新增 scripts/import_user_holdings.py，支持批量导入用户初始基金持仓数据
+8. 新增 config/nav_estimation.yaml，配置操作建议阈值（止盈/止损/加仓触发条件）
+9. 新增 tests/test_nav_estimator.py，覆盖操作建议规则、正常估算、QDII 代理、边界情况共 16 个测试用例
+
+### 调整
+
+1. scripts/run_workers.py 新增 `--worker nav` 选项，支持启动净值估算 Worker
+
 ## 2026-06-05
 
 - **数据库迁移: SQLite → PostgreSQL** — 引入 `src/utils/database.py` 连接池管理模块（基于 psycopg2 ThreadedConnectionPool），统一管理 PostgreSQL 连接。三个 storage 模块（daily / fund / stock）全部适配 PostgreSQL：

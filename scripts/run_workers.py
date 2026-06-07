@@ -31,6 +31,21 @@ def run_fund_worker():
     worker.start()
 
 
+def run_nav_estimation_worker():
+    from redis import Redis
+    from src.workers.nav_estimation_worker import create_nav_estimation_worker
+    from src.utils.logger import get_logger, setup_logging
+
+    setup_logging(level="INFO", log_file=ROOT / "logs" / "nav_estimation_worker.log")
+    log = get_logger("nav_estimation_worker")
+
+    config_path = str(ROOT / "config" / "nav_estimation.yaml")
+    redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
+    worker = create_nav_estimation_worker(redis_client, config_path=config_path)
+    log.info("Nav estimation worker starting")
+    worker.start()
+
+
 def run_screener_worker():
     from redis import Redis
     from src.workers.screener_worker import create_screener_worker
@@ -48,6 +63,7 @@ def run_screener_worker():
 WORKERS = {
     "fund": run_fund_worker,
     "screener": run_screener_worker,
+    "nav": run_nav_estimation_worker,
 }
 
 
