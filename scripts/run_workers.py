@@ -16,23 +16,37 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from dotenv import load_dotenv
+load_dotenv(ROOT / "config" / ".env")
+
+
+def _create_redis_client():
+    from redis import Redis
+    from src.utils.secrets import get_env
+
+    return Redis(
+        host=get_env("REDIS_HOST", "127.0.0.1"),
+        port=int(get_env("REDIS_PORT", "6379")),
+        db=int(get_env("REDIS_DB", "0")),
+        password=get_env("REDIS_PASSWORD"),
+        decode_responses=True,
+    )
+
 
 def run_fund_worker():
-    from redis import Redis
     from src.workers.fund_worker import create_fund_worker
     from src.utils.logger import get_logger, setup_logging
 
     setup_logging(level="INFO", log_file=ROOT / "logs" / "fund_worker.log")
     log = get_logger("fund_worker")
 
-    redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
+    redis_client = _create_redis_client()
     worker = create_fund_worker(redis_client)
     log.info("Fund worker starting")
     worker.start()
 
 
 def run_nav_estimation_worker():
-    from redis import Redis
     from src.workers.nav_estimation_worker import create_nav_estimation_worker
     from src.utils.logger import get_logger, setup_logging
 
@@ -40,21 +54,20 @@ def run_nav_estimation_worker():
     log = get_logger("nav_estimation_worker")
 
     config_path = str(ROOT / "config" / "nav_estimation.yaml")
-    redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
+    redis_client = _create_redis_client()
     worker = create_nav_estimation_worker(redis_client, config_path=config_path)
     log.info("Nav estimation worker starting")
     worker.start()
 
 
 def run_screener_worker():
-    from redis import Redis
     from src.workers.screener_worker import create_screener_worker
     from src.utils.logger import get_logger, setup_logging
 
     setup_logging(level="INFO", log_file=ROOT / "logs" / "screener_worker.log")
     log = get_logger("screener_worker")
 
-    redis_client = Redis(host="127.0.0.1", port=6379, db=0, decode_responses=True)
+    redis_client = _create_redis_client()
     worker = create_screener_worker(redis_client)
     log.info("Screener worker starting")
     worker.start()
