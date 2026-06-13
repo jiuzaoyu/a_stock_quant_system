@@ -12,6 +12,13 @@ log = get_logger(__name__)
 
 
 def create_fund_worker(redis_client: Redis, db_path: str | None = None) -> BaseWorker:
+    """创建基金数据采集 Worker，订阅 Redis Stream 并注册任务处理器。
+
+    流程:
+        1. 初始化数据库 schema（首次运行时建表）
+        2. 创建 BaseWorker，监听 cron:jobs:fund_incremental 流
+        3. 注册 fund_incremental（增量采集当日净值）和 fund_list_refresh（刷新全量基金列表）
+    """
     storage = FundStorage()
     storage.init_schema()
 

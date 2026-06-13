@@ -298,23 +298,26 @@ class FundStorage:
         conn = conn or self.connect()
         try:
             with conn.cursor() as cur:
+                # 建表
                 cur.execute(FUND_INFO_SCHEMA)
                 cur.execute(FUND_NAV_SCHEMA)
                 cur.execute(FUND_MANAGER_SCHEMA)
                 cur.execute(FUND_HOLDING_SCHEMA)
+                cur.execute(FUND_USER_HOLDING_SCHEMA)
+                cur.execute(FUND_NAV_ESTIMATION_SCHEMA)
+                cur.execute(FUND_USER_PNL_SCHEMA)
+                # 建索引
                 cur.execute(INDEX_INFO_TYPE)
                 cur.execute(INDEX_NAV_CODE_DATE)
                 cur.execute(INDEX_NAV_DATE)
                 cur.execute(INDEX_MANAGER_CODE)
                 cur.execute(INDEX_HOLDING_CODE)
                 cur.execute(INDEX_HOLDING_DATE)
-                cur.execute(FUND_USER_HOLDING_SCHEMA)
-                cur.execute(FUND_NAV_ESTIMATION_SCHEMA)
-                cur.execute(FUND_USER_PNL_SCHEMA)
                 cur.execute(INDEX_USER_HOLDING_CODE)
                 cur.execute(INDEX_NAV_EST_CODE_DATE)
                 cur.execute(INDEX_USER_PNL_CODE_DATE)
                 cur.execute(INDEX_USER_PNL_DATE)
+                # 存量迁移
                 cur.execute(FUND_INFO_MIGRATION1)
                 cur.execute(FUND_INFO_MIGRATION2)
                 for obj, desc in FUND_COMMENTS:
