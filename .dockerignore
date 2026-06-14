@@ -1,0 +1,37 @@
+# 密钥文件 —— 绝不进镜像
+config/.env
+config/.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+
+# Claude
+.agents/
+.claude/
+
+# 数据和输出 —— 运行时挂载
+data/
+logs/
+output/
+
+# 文档
+docs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# 系统
+.DS_Store
+Thumbs.db

@@ -15,7 +15,7 @@ from .fetcher import (
     fetch_fund_holdings,
 )
 from .storage import FundStorage
-from ..utils.logger import get_logger
+from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -43,12 +43,12 @@ class FundCollector:
         result = asyncio.run(collector.run())
     """
 
-    storage: FundStorage
-    lookback_years: int = 2
-    request_delay_seconds: float = 0.5
-    progress_every: int = 20
-    max_retries: int = 3
-    concurrency: int = DEFAULT_CONCURRENCY
+    storage: FundStorage                          # 数据库读写入口
+    lookback_years: int = 2                       # 历史净值回溯年数
+    request_delay_seconds: float = 0.5            # 请求间隔（防反爬）
+    progress_every: int = 20                      # 每采集 N 只基金输出一次进度日志
+    max_retries: int = 3                          # 单只基金采集失败最大重试次数
+    concurrency: int = DEFAULT_CONCURRENCY        # 并发采集数（限制同时发出的 HTTP 请求数）
 
     async def run(self) -> FundCollectResult:
         result = FundCollectResult()

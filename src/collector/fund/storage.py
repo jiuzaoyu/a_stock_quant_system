@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 from psycopg2.extras import execute_values
 
-from ..utils.database import get_connection, return_connection, sanitize
+from ...utils.database import get_connection, return_connection, sanitize
 
 FUND_INFO_TABLE = "fund_info"
 FUND_NAV_TABLE = "fund_nav"

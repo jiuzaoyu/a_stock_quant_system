@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 from psycopg2.extras import execute_values
 
-from ..utils.database import get_connection, return_connection, sanitize
+from ...utils.database import get_connection, return_connection, sanitize
 
 STOCK_INFO_TABLE = "stock_info"
 STOCK_DAILY_TABLE = "stock_daily"

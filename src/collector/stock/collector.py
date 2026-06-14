@@ -14,7 +14,7 @@ from .fetcher import (
     fetch_tencent_batch,
 )
 from .storage import StockStorage
-from ..utils.logger import get_logger
+from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
 

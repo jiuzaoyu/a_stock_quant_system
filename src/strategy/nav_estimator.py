@@ -13,7 +13,7 @@ from datetime import date as _date, datetime
 from typing import Optional
 
 from ..data.realtime_quote import fetch_realtime_batch, fetch_qdii_proxy_quotes
-from ..fund_collector.storage import FundStorage
+from ..collector.fund.storage import FundStorage
 
 log = logging.getLogger(__name__)
 

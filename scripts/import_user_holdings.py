@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.fund_collector.storage import FundStorage
+from src.collector.fund.storage import FundStorage
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)

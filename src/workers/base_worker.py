@@ -1,8 +1,11 @@
 import logging
+import threading
 from typing import Callable
 
 from redis import Redis
 from redis.exceptions import ResponseError
+
+log = logging.getLogger(__name__)
 
 log = logging.getLogger(__name__)
 
@@ -62,3 +65,16 @@ class BaseWorker:
                     continue
 
                 self._redis.xack(self._stream, self._group, msg_id)
+
+
+def start_workers(workers: list["BaseWorker"]) -> None:
+    """在新线程中启动所有 worker（每个 worker.start() 是阻塞循环）。"""
+    threads = []
+    for w in workers:
+        t = threading.Thread(target=w.start, daemon=True, name=w._consumer)
+        t.start()
+        threads.append(t)
+        log.info("Worker thread started: %s", w._consumer)
+
+    for t in threads:
+        t.join()

@@ -8,7 +8,7 @@ import urllib.request
 from datetime import date as _date
 from typing import Optional
 
-from ..stock_collector.fetcher import get_prefix, normalize_code
+from ..collector.stock.fetcher import get_prefix, normalize_code
 
 
 def _safe_float(val) -> Optional[float]:

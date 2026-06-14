@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 
 from src.utils.config import load_yaml
 from src.utils.logger import get_logger, setup_logging
-from src.stock_collector import StockCollector, StockStorage
+from src.collector.stock import StockCollector, StockStorage
 
 logger = get_logger(__name__)
 

@@ -2,9 +2,9 @@
 统一 Worker 启动入口 — Redis Streams 消费者。
 
 用法:
-    python scripts/run_workers.py                      # 启动所有 worker
-    python scripts/run_workers.py --worker fund        # 只启动 fund worker
-    python scripts/run_workers.py --worker screener    # 只启动 screener worker
+    python scripts/run_workers.py                    # 启动所有 worker
+    python scripts/run_workers.py --worker fund      # 只启动基金相关 worker
+    python scripts/run_workers.py --worker stock     # 只启动股票相关 worker
 """
 
 import argparse
@@ -12,11 +12,12 @@ import sys
 from multiprocessing import Process
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dotenv import load_dotenv
 load_dotenv(ROOT / "config" / ".env")
 
 
@@ -30,60 +31,51 @@ def _create_redis_client():
         db=int(get_env("REDIS_DB", "0")),
         password=get_env("REDIS_PASSWORD"),
         decode_responses=True,
+        socket_timeout=15,  # 必须大于 XREADGROUP 的 block_ms（5s），否则阻塞等待时 socket 会先超时
     )
 
 
 def run_fund_worker():
-    from src.workers.fund_worker import create_fund_worker
+    from src.workers.fund_worker import create_fund_workers
+    from src.workers.base_worker import start_workers
     from src.utils.logger import get_logger, setup_logging
 
     setup_logging(level="INFO", log_file=ROOT / "logs" / "fund_worker.log")
     log = get_logger("fund_worker")
 
     redis_client = _create_redis_client()
-    worker = create_fund_worker(redis_client)
-    log.info("Fund worker starting")
-    worker.start()
-
-
-def run_nav_estimation_worker():
-    from src.workers.nav_estimation_worker import create_nav_estimation_worker
-    from src.utils.logger import get_logger, setup_logging
-
-    setup_logging(level="INFO", log_file=ROOT / "logs" / "nav_estimation_worker.log")
-    log = get_logger("nav_estimation_worker")
-
     config_path = str(ROOT / "config" / "nav_estimation.yaml")
-    redis_client = _create_redis_client()
-    worker = create_nav_estimation_worker(redis_client, config_path=config_path)
-    log.info("Nav estimation worker starting")
-    worker.start()
+    workers = create_fund_workers(redis_client, config_path=config_path)
+    log.info("Fund workers starting (%d threads)", len(workers))
+    start_workers(workers)
 
 
-def run_screener_worker():
-    from src.workers.screener_worker import create_screener_worker
+def run_stock_worker():
+    from src.workers.stock_worker import create_stock_workers
+    from src.workers.base_worker import start_workers
     from src.utils.logger import get_logger, setup_logging
 
-    setup_logging(level="INFO", log_file=ROOT / "logs" / "screener_worker.log")
-    log = get_logger("screener_worker")
+    setup_logging(level="INFO", log_file=ROOT / "logs" / "stock_worker.log")
+    log = get_logger("stock_worker")
 
     redis_client = _create_redis_client()
-    worker = create_screener_worker(redis_client)
-    log.info("Screener worker starting")
-    worker.start()
+    workers = create_stock_workers(redis_client)
+    log.info("Stock workers starting (%d threads)", len(workers))
+    start_workers(workers)
 
 
 WORKERS = {
     "fund": run_fund_worker,
-    "screener": run_screener_worker,
-    "nav": run_nav_estimation_worker,
+    "stock": run_stock_worker,
 }
 
 
 def main():
     parser = argparse.ArgumentParser(description="统一 Worker 启动器")
-    parser.add_argument("--worker", "-w", choices=list(WORKERS.keys()),
-                        help="只启动指定 worker，默认启动全部")
+    parser.add_argument(
+        "--worker", "-w", choices=list(WORKERS.keys()),
+        help="只启动指定 worker，默认启动全部",
+    )
     args = parser.parse_args()
 
     if args.worker:

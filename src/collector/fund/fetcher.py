@@ -7,6 +7,10 @@ from typing import Optional
 
 import aiohttp
 
+from ...utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 TARGET_FUND_TYPE_PREFIXES = ("股票型", "混合型", "指数型")
 
 HEADERS = {
@@ -72,18 +76,27 @@ async def fetch_fund_full_history(
     url = FUND_HISTORY_TPL.format(code=code)
     text = await _get_text(session, url, HEADERS)
 
-    nav_pattern = r"Data_netWorthTrend\s*=\s*(\[.+?\])"
+    nav_pattern = r"Data_netWorthTrend\s*=\s*(\[.+?\])\s*;"
     nav_match = re.search(nav_pattern, text, re.DOTALL)
     if not nav_match:
+        logger.warning("%s: Data_netWorthTrend not found", code)
         return []
 
-    nav_data = json.loads(nav_match.group(1))
+    try:
+        nav_data = json.loads(nav_match.group(1))
+    except json.JSONDecodeError as e:
+        logger.warning("%s: Data_netWorthTrend JSON parse failed: %s", code, e)
+        return []
 
-    ac_pattern = r"Data_ACWorthTrend\s*=\s*(\[\[.+?\]\])"
+    ac_pattern = r"Data_ACWorthTrend\s*=\s*(\[\[.+?\]\])\s*;"
     ac_match = re.search(ac_pattern, text, re.DOTALL)
     ac_map = {}
     if ac_match:
-        ac_data = json.loads(ac_match.group(1))
+        try:
+            ac_data = json.loads(ac_match.group(1))
+        except json.JSONDecodeError as e:
+            logger.warning("%s: Data_ACWorthTrend JSON parse failed: %s", code, e)
+            ac_data = []
         for entry in ac_data:
             if isinstance(entry, list) and len(entry) >= 2:
                 ts = entry[0]
@@ -146,7 +159,11 @@ async def fetch_fund_manager(
     if not mgr_match:
         return []
 
-    managers = json.loads(mgr_match.group(1))
+    try:
+        managers = json.loads(mgr_match.group(1))
+    except json.JSONDecodeError as e:
+        logger.warning("%s: Data_currentFundManager JSON parse failed: %s", code, e)
+        return []
     result = []
     for m in managers:
         power = m.get("power", {}) or {}
@@ -253,7 +270,7 @@ async def fetch_fund_list_refresh(storage_conn) -> int:
             pinyin_full = excluded.pinyin_full,
             updated_at = NOW()
     """
-    from ..utils.database import sanitize
+    from ...utils.database import sanitize
 
     tuples = [
         (sanitize(f["code"]), sanitize(f["name"]), sanitize(f["fund_type"]),
