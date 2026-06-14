@@ -36,6 +36,10 @@ def _create_redis_client():
 
 
 def run_fund_worker():
+    """启动基金 Worker 进程：基金净值采集 + 盘中估值估算。
+
+    通过 Redis Streams 消费任务消息，Worker 线程池处理采集/估算请求。
+    """
     from src.workers.fund_worker import create_fund_workers
     from src.workers.base_worker import start_workers
     from src.utils.logger import get_logger, setup_logging
@@ -44,9 +48,10 @@ def run_fund_worker():
     log = get_logger("fund_worker")
 
     redis_client = _create_redis_client()
+    # 基金估值参数（定时任务 cron、持仓基金列表、估算阈值等）
     config_path = str(ROOT / "config" / "nav_estimation.yaml")
     workers = create_fund_workers(redis_client, config_path=config_path)
-    log.info("Fund workers starting (%d threads)", len(workers))
+    log.info("基金 Worker 启动中 (%d 个线程)", len(workers))
     start_workers(workers)
 
 

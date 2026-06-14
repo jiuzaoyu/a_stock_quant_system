@@ -1,12 +1,22 @@
 """基金数据批量采集与增量更新。"""
 
 import asyncio
-import random
 import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import List, Optional, Tuple
 
+import aiohttp
+
+from config.collector.fund_cfg import (
+    CONCURRENCY,
+    HEADERS_FUND,
+    LOOKBACK_YEARS,
+    MAX_RETRIES,
+    PROGRESS_EVERY,
+    REQUEST_DELAY_SECONDS,
+    REQUEST_TIMEOUT,
+)
 from .fetcher import (
     fetch_fund_list,
     fetch_fund_full_history,
@@ -18,8 +28,6 @@ from .storage import FundStorage
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-DEFAULT_CONCURRENCY = 5
 
 
 @dataclass
@@ -44,11 +52,11 @@ class FundCollector:
     """
 
     storage: FundStorage                          # 数据库读写入口
-    lookback_years: int = 2                       # 历史净值回溯年数
-    request_delay_seconds: float = 0.5            # 请求间隔（防反爬）
-    progress_every: int = 20                      # 每采集 N 只基金输出一次进度日志
-    max_retries: int = 3                          # 单只基金采集失败最大重试次数
-    concurrency: int = DEFAULT_CONCURRENCY        # 并发采集数（限制同时发出的 HTTP 请求数）
+    lookback_years: int = LOOKBACK_YEARS          # 历史净值回溯年数
+    request_delay_seconds: float = REQUEST_DELAY_SECONDS  # 请求间隔（防反爬）
+    progress_every: int = PROGRESS_EVERY          # 每采集 N 只基金输出一次进度日志
+    max_retries: int = MAX_RETRIES                # 单只基金采集失败最大重试次数
+    concurrency: int = CONCURRENCY                # 并发采集数
 
     async def run(self) -> FundCollectResult:
         result = FundCollectResult()
@@ -171,7 +179,7 @@ async def collect_today_nav(
 
     logger.info("待采集基金: %d 只", len(codes))
 
-    sem = asyncio.Semaphore(DEFAULT_CONCURRENCY)
+    sem = asyncio.Semaphore(CONCURRENCY)
 
     async def collect_one(code: str, session):
         async with sem:
@@ -215,11 +223,7 @@ async def refresh_fund_list(storage: FundStorage) -> int:
 
 def _new_session():
     """为每轮采集创建一个共享的 ClientSession，复用 TCP 连接。"""
-    import aiohttp
     return aiohttp.ClientSession(
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0",
-            "Referer": "https://fund.eastmoney.com/",
-        },
-        timeout=aiohttp.ClientTimeout(total=30),
+        headers=HEADERS_FUND,
+        timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
     )

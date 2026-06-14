@@ -39,15 +39,16 @@ def create_fund_workers(
     # ---- 数据采集 worker ----
     data_worker = BaseWorker(
         redis_client,
-        stream="cron:jobs:fund_incremental",
-        group="fund_group",
-        consumer="fund_consumer_1",
+        stream="cron:jobs:fund_queue_1",
+        group="fund_queue_group",
+        consumer="fund_queueconsumer_1",
     )
     # 注册消息处理器：Redis Stream 的消息类型 -> 处理函数
     data_worker.register(
         "fund_incremental",
         _make_collect_handler(collect_today_nav, storage, "fund_incremental"),
     )
+    # 基金列表刷新：从天天基金拉取全量列表，更新 fund_info 表（新增基金/名称变更）
     data_worker.register(
         "fund_list_refresh",
         _make_collect_handler(refresh_fund_list, storage, "fund_list_refresh"),
@@ -63,7 +64,7 @@ def create_fund_workers(
     )
     nav_worker.register("nav_estimation", _make_nav_handler(storage, estimator))
 
-    return [data_worker, nav_worker]
+    return [data_worker]
 
 
 # ==========================================================================

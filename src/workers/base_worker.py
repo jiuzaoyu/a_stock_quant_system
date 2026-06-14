@@ -31,7 +31,7 @@ class BaseWorker:
 
     def start(self, block_ms: int = 5000) -> None:
         self._running = True
-        log.info("Worker %s listening on stream %s (group=%s)", self._consumer, self._stream, self._group)
+        log.info("Worker %s 开始监听 Stream %s (group=%s)", self._consumer, self._stream, self._group)
         while self._running:
             try:
                 self._process_one(block_ms)
@@ -74,7 +74,7 @@ def start_workers(workers: list["BaseWorker"]) -> None:
         t = threading.Thread(target=w.start, daemon=True, name=w._consumer)
         t.start()
         threads.append(t)
-        log.info("Worker thread started: %s", w._consumer)
+        log.info("Worker 线程已启动: %s", w._consumer)
 
     for t in threads:
         t.join()

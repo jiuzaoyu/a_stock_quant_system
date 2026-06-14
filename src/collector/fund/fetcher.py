@@ -6,29 +6,21 @@ from datetime import datetime
 from typing import Optional
 
 import aiohttp
+from psycopg2.extras import execute_values
 
+from config.collector.fund_cfg import (
+    FUND_HISTORY_TPL,
+    FUND_HOLDINGS_URL,
+    FUND_LIST_URL,
+    HEADERS_F10,
+    HEADERS_FUND,
+    REQUEST_TIMEOUT,
+    TARGET_FUND_TYPE_PREFIXES,
+)
+from ...utils.database import sanitize
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-TARGET_FUND_TYPE_PREFIXES = ("股票型", "混合型", "指数型")
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0",
-    "Referer": "https://fund.eastmoney.com/",
-}
-
-FUND_LIST_URL = "http://fund.eastmoney.com/js/fundcode_search.js"
-FUND_HISTORY_TPL = "https://fund.eastmoney.com/pingzhongdata/{code}.js"
-FUND_HOLDINGS_URL = (
-    "https://fundf10.eastmoney.com/FundArchivesDatas.aspx"
-    "?type=jjcc&code={code}&topline=10&year=&month=&rt=0.1"
-)
-
-HEADERS_F10 = {
-    **HEADERS,
-    "Referer": "https://fundf10.eastmoney.com/",
-}
 
 
 async def fetch_fund_list(session: Optional[aiohttp.ClientSession] = None) -> list[dict]:
@@ -40,7 +32,7 @@ async def fetch_fund_list(session: Optional[aiohttp.ClientSession] = None) -> li
         [{"code": "019018", "name": "易方达信息产业混合C", "fund_type": "混合型",
           "pinyin": "YFDXXCYHHC", "pinyin_full": "YIFANGDAXINXICHANYEHUNHEC"}, ...]
     """
-    text = await _get_text(session, FUND_LIST_URL, HEADERS)
+    text = await _get_text(session, FUND_LIST_URL, HEADERS_FUND)
 
     json_str = text[text.index("[") : text.rindex("]") + 1]
     all_funds = json.loads(json_str)
@@ -74,7 +66,7 @@ async def fetch_fund_full_history(
           "accum_nav": 2.3456, "daily_growth": 0.25}, ...]
     """
     url = FUND_HISTORY_TPL.format(code=code)
-    text = await _get_text(session, url, HEADERS)
+    text = await _get_text(session, url, HEADERS_FUND)
 
     nav_pattern = r"Data_netWorthTrend\s*=\s*(\[.+?\])\s*;"
     nav_match = re.search(nav_pattern, text, re.DOTALL)
@@ -152,7 +144,7 @@ async def fetch_fund_manager(
           "profit_json": "{...}"}, ...]
     """
     url = FUND_HISTORY_TPL.format(code=code)
-    text = await _get_text(session, url, HEADERS)
+    text = await _get_text(session, url, HEADERS_FUND)
 
     mgr_pattern = r"Data_currentFundManager\s*=\s*(.+?);\s*/\*"
     mgr_match = re.search(mgr_pattern, text)
@@ -252,12 +244,16 @@ async def fetch_fund_holdings(
 
 
 async def fetch_fund_list_refresh(storage_conn) -> int:
-    """刷新基金列表（用于增量采集前更新 fund_info）。
+    """从天天基金拉取全量列表，增量同步到 fund_info 表。
+
+    行为：
+      - 新基金 → INSERT 入库
+      - 已有基金 → UPDATE name / fund_type / pinyin（名称变更/类型调整会更新）
+      - 已下架基金 → 不删除，表中保留（历史数据不丢）
 
     Returns:
-        增/更新的基金数
+        本次增/更新的基金数（纯新增 + 有变更的）
     """
-    from psycopg2.extras import execute_values
 
     funds = await fetch_fund_list()
     sql = """
@@ -270,7 +266,6 @@ async def fetch_fund_list_refresh(storage_conn) -> int:
             pinyin_full = excluded.pinyin_full,
             updated_at = NOW()
     """
-    from ...utils.database import sanitize
 
     tuples = [
         (sanitize(f["code"]), sanitize(f["name"]), sanitize(f["fund_type"]),
@@ -311,10 +306,10 @@ async def _get_text(
     headers: dict[str, str],
 ) -> str:
     """发起 GET 请求并返回响应文本。session 为 None 时自动创建临时 session。"""
-    if session is not None:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+    if session:
+        async with session.get(url, headers=headers, timeout=timeout) as resp:
             return await resp.text(encoding="utf-8")
-    else:
-        async with aiohttp.ClientSession(headers=headers) as s:
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                return await resp.text(encoding="utf-8")
+    async with aiohttp.ClientSession(headers=headers) as s:
+        async with s.get(url, timeout=timeout) as resp:
+            return await resp.text(encoding="utf-8")
