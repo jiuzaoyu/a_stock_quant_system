@@ -247,9 +247,9 @@ async def fetch_fund_list_refresh(storage_conn) -> int:
     """从天天基金拉取全量列表，增量同步到 fund_info 表。
 
     行为：
-      - 新基金 → INSERT 入库
-      - 已有基金 → UPDATE name / fund_type / pinyin（名称变更/类型调整会更新）
-      - 已下架基金 → 不删除，表中保留（历史数据不丢）
+      - 新基金 → INSERT 入库（is_deleted = FALSE）
+      - 已有基金 → UPDATE name / fund_type / pinyin，同时 is_deleted = FALSE（已下架又上架的基金恢复）
+      - 不在本次列表中的基金 → is_deleted 标记为 TRUE（软删除，历史数据不丢）
 
     Returns:
         本次增/更新的基金数（纯新增 + 有变更的）
@@ -264,6 +264,7 @@ async def fetch_fund_list_refresh(storage_conn) -> int:
             fund_type = excluded.fund_type,
             pinyin = excluded.pinyin,
             pinyin_full = excluded.pinyin_full,
+            is_deleted = FALSE,
             updated_at = NOW()
     """
 
@@ -273,9 +274,18 @@ async def fetch_fund_list_refresh(storage_conn) -> int:
         for f in funds
     ]
     tuples = list({t[0]: t for t in tuples}.values())
+    active_codes = [t[0] for t in tuples]
     with storage_conn.cursor() as cur:
         execute_values(cur, sql, tuples, page_size=1000)
-        return cur.rowcount
+        upserted = cur.rowcount
+        cur.execute(
+            "UPDATE fund_info SET is_deleted = TRUE, updated_at = NOW() "
+            "WHERE is_deleted = FALSE AND code != ALL(%s)",
+            (active_codes,),
+        )
+        deleted = cur.rowcount
+        logger.info("基金列表同步: upsert %d 条, 标记删除 %d 条", upserted, deleted)
+        return upserted
 
 
 # ------------------------------------------------------------------ 内部辅助

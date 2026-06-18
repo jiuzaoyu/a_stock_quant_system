@@ -46,6 +46,10 @@ FUND_INFO_MIGRATION2 = f"""
 ALTER TABLE {FUND_INFO_TABLE} ADD COLUMN IF NOT EXISTS pinyin_full TEXT NOT NULL DEFAULT ''
 """
 
+FUND_INFO_MIGRATION3 = f"""
+ALTER TABLE {FUND_INFO_TABLE} ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE
+"""
+
 FUND_NAV_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS {FUND_NAV_TABLE} (
     code TEXT NOT NULL,
@@ -202,6 +206,7 @@ FUND_COMMENTS = [
     (f"{FUND_INFO_TABLE}.pinyin_full", "拼音全称，如 ZHAOSHANGZHONGZHENGBAIJIUZHISHU"),
     (f"{FUND_INFO_TABLE}.created_at", "记录首次入库时间"),
     (f"{FUND_INFO_TABLE}.updated_at", "记录最近更新时间"),
+    (f"{FUND_INFO_TABLE}.is_deleted", "软删除标记，TRUE=已下架/清盘，不再采集净值"),
     # fund_nav
     (f"TABLE {FUND_NAV_TABLE}", "基金净值历史"),
     (f"{FUND_NAV_TABLE}.code", "基金代码"),
@@ -320,6 +325,7 @@ class FundStorage:
                 # 存量迁移
                 cur.execute(FUND_INFO_MIGRATION1)
                 cur.execute(FUND_INFO_MIGRATION2)
+                cur.execute(FUND_INFO_MIGRATION3)
                 for obj, desc in FUND_COMMENTS:
                     prefix = "" if obj.startswith("TABLE ") else "COLUMN "
                     cur.execute(f"COMMENT ON {prefix}{obj} IS %s", (desc,))
@@ -338,6 +344,7 @@ class FundStorage:
             fund_type = excluded.fund_type,
             pinyin = excluded.pinyin,
             pinyin_full = excluded.pinyin_full,
+            is_deleted = FALSE,
             updated_at = NOW()
         """
         tuples = [
@@ -453,16 +460,33 @@ class FundStorage:
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM {FUND_NAV_TABLE} WHERE code = %s", (code,))
 
-    def get_all_codes(self, conn=None) -> list[str]:
+    def get_all_codes(self, conn=None, include_deleted: bool = False) -> list[str]:
         own = conn is None
         conn = conn or self.connect()
         try:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT code FROM {FUND_INFO_TABLE}")
+                if include_deleted:
+                    cur.execute(f"SELECT code FROM {FUND_INFO_TABLE}")
+                else:
+                    cur.execute(
+                        f"SELECT code FROM {FUND_INFO_TABLE} WHERE is_deleted = FALSE"
+                    )
                 return [r[0] for r in cur.fetchall()]
         finally:
             if own:
                 return_connection(conn)
+
+    def mark_deleted_funds(self, conn, active_codes: list[str]) -> int:
+        """将不在 active_codes 中的基金标记为已删除（is_deleted = TRUE）。"""
+        if not active_codes:
+            return 0
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {FUND_INFO_TABLE} SET is_deleted = TRUE, updated_at = NOW() "
+                f"WHERE is_deleted = FALSE AND code != ALL(%s)",
+                (active_codes,),
+            )
+            return cur.rowcount
 
     # ------------------------------------------------------------------
     # fund_user_holding — 用户持仓
