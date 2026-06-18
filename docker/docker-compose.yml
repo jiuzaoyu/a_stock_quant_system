@@ -7,13 +7,13 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: quant_redis
+    container_name: nc_redis
     restart: always
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
     ports:
-      - "127.0.0.1:6379:6379"
+      - "36379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -22,7 +22,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: quant_postgres
+    container_name: gof_postgres
     restart: always
     environment:
       POSTGRES_USER: quant
@@ -31,7 +31,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U quant"]
       interval: 10s
@@ -39,8 +39,7 @@ services:
       retries: 3
 
   # ==========================================================================
-  # Worker —— 单容器多进程，所有 worker 通过 multiprocessing 管理
-  # 新增 worker 只需在 run_workers.py 的 WORKERS 字典注册即可
+  # Worker —— 单容器多进程
   # ==========================================================================
 
   workers:
@@ -63,7 +62,6 @@ services:
     volumes:
       - ../config:/app/config:ro
       - ../logs:/app/logs
-    # 不加 --worker 参数 → 启动 WORKERS 字典中所有 worker
     command: python scripts/run_workers.py
 
 volumes:
