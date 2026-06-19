@@ -1,6 +1,7 @@
 # 环境与密钥（含 config/.env，防止 API Key 等意外提交）
 .env
 config/.env
+docker/.env
 *.env.local
 .venv/
 venv/
