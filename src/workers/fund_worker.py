@@ -12,7 +12,7 @@ from pathlib import Path
 
 from redis import Redis
 
-from src.collector.fund import FundStorage, collect_today_nav, refresh_fund_list
+from src.collector.fund import FundStorage, collect_fund_history, collect_today_nav, refresh_fund_list
 from src.strategy.nav_estimator import NavEstimator
 from src.utils.logger import get_logger
 from src.workers.base_worker import BaseWorker, start_workers
@@ -52,6 +52,11 @@ def create_fund_workers(
     data_worker.register(
         "fund_list_refresh",
         _make_collect_handler(refresh_fund_list, storage, "fund_list_refresh"),
+    )
+    # 全量历史净值采集：拉取所有基金近两年净值、基金经理、重仓股（手动触发）
+    data_worker.register(
+        "fund_history_full",
+        _make_collect_handler(collect_fund_history, storage, "fund_history_full"),
     )
 
     # ---- 净值估算 worker ----

@@ -150,6 +150,15 @@ class FundCollector:
         raise last_err  # type: ignore[misc]
 
 
+async def collect_fund_history(storage: FundStorage) -> FundCollectResult:
+    """全量历史净值采集（一次性 ETL，可手动触发）。
+
+    采集股票型/混合型/指数型基金近N年净值、基金经理、重仓股数据。
+    """
+    collector = FundCollector(storage)
+    return await collector.run()
+
+
 async def collect_today_nav(
     storage: FundStorage, target_date: Optional[str] = None
 ) -> int:
