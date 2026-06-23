@@ -2,7 +2,7 @@
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiohttp
@@ -19,6 +19,8 @@ from config.collector.fund_cfg import (
 )
 from ...utils.database import sanitize
 from ...utils.logger import get_logger
+
+CST = timezone(timedelta(hours=8))
 
 logger = get_logger(__name__)
 
@@ -126,8 +128,8 @@ async def fetch_fund_full_history(
 
 
 def _ts_to_date(ts: int) -> str:
-    """Unix 毫秒时间戳 → YYYY-MM-DD"""
-    return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+    """Unix 毫秒时间戳 → YYYY-MM-DD（北京时间）"""
+    return datetime.fromtimestamp(ts / 1000, tz=CST).strftime("%Y-%m-%d")
 
 
 async def fetch_fund_manager(
