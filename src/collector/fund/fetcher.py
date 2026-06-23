@@ -68,7 +68,7 @@ async def fetch_fund_full_history(
     url = FUND_HISTORY_TPL.format(code=code)
     text = await _get_text(session, url, HEADERS_FUND)
 
-    nav_pattern = r"Data_netWorthTrend\s*=\s*(\[.+?\])\s*;"
+    nav_pattern = r"Data_netWorthTrend\s*=\s*(\[.*?\])\s*;"
     nav_match = re.search(nav_pattern, text, re.DOTALL)
     if not nav_match:
         logger.warning("%s: Data_netWorthTrend not found", code)
@@ -80,7 +80,7 @@ async def fetch_fund_full_history(
         logger.warning("%s: Data_netWorthTrend JSON parse failed: %s", code, e)
         return []
 
-    ac_pattern = r"Data_ACWorthTrend\s*=\s*(\[\[.+?\]\])\s*;"
+    ac_pattern = r"Data_ACWorthTrend\s*=\s*(\[\[.*?\]\])\s*;"
     ac_match = re.search(ac_pattern, text, re.DOTALL)
     ac_map = {}
     if ac_match:

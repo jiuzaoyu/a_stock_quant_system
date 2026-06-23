@@ -29,7 +29,7 @@ def create_stock_workers(redis_client: Redis) -> list[BaseWorker]:
     cfg = load_yaml(ROOT / "config" / "screener.yaml")
     screener_cfg = cfg["screener"]
 
-    engine = ScreenerEngine(screener_cfg, project_root=ROOT)
+    engine = ScreenerEngine(screener_cfg)
 
     screener_worker = BaseWorker(
         redis_client,
