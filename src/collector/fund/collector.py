@@ -159,14 +159,17 @@ async def collect_fund_history(storage: FundStorage) -> FundCollectResult:
     return await collector.run()
 
 
-async def collect_today_nav(
-    storage: FundStorage, target_date: Optional[str] = None
+async def collect_recent_nav(
+    storage: FundStorage, target_date: Optional[str] = None, lookback_days: int = 7
 ) -> int:
-    """增量采集：只拉当日净值。
+    """增量采集：拉取近N日净值，已有记录自动跳过。
+
+    用于每日定时采集 + 故障恢复。若系统中断几天，重跑即可补回缺失数据。
 
     Args:
         storage: FundStorage 实例
         target_date: 目标日期 YYYY-MM-DD，None=今天
+        lookback_days: 往前推的天数，默认 7 天（覆盖约 5 个交易日）
 
     Returns:
         本次写入的净值记录数
@@ -174,7 +177,8 @@ async def collect_today_nav(
     if target_date is None:
         target_date = date.today().strftime("%Y-%m-%d")
 
-    logger.info("增量采集开始: %s", target_date)
+    from_date = (date.fromisoformat(target_date) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    logger.info("增量采集: %s ~ %s (回溯 %d 天)", from_date, target_date, lookback_days)
 
     # 1. 刷新基金列表
     conn = storage.connect()
@@ -194,13 +198,13 @@ async def collect_today_nav(
         async with sem:
             try:
                 rows = await fetch_fund_full_history(code, session)
-                today_rows = [r for r in rows if r["nav_date"] == target_date]
-                if not today_rows:
+                match_rows = [r for r in rows if from_date <= r["nav_date"] <= target_date]
+                if not match_rows:
                     return 0
 
                 conn2 = storage.connect()
                 try:
-                    inserted = storage.append_nav(conn2, today_rows)
+                    inserted = storage.append_nav(conn2, match_rows)
                     conn2.commit()
                     return inserted
                 finally:

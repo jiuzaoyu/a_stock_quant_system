@@ -1,4 +1,4 @@
-from .collector import FundCollector, FundCollectResult, collect_fund_history, collect_today_nav, refresh_fund_list
+from .collector import FundCollector, FundCollectResult, collect_fund_history, collect_recent_nav, refresh_fund_list
 from .fetcher import (
     fetch_fund_list,
     fetch_fund_full_history,
@@ -11,7 +11,7 @@ __all__ = [
     "FundCollector",
     "FundCollectResult",
     "collect_fund_history",
-    "collect_today_nav",
+    "collect_recent_nav",
     "refresh_fund_list",
     "fetch_fund_list",
     "fetch_fund_full_history",

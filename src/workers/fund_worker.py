@@ -12,7 +12,7 @@ from pathlib import Path
 
 from redis import Redis
 
-from src.collector.fund import FundStorage, collect_fund_history, collect_today_nav, refresh_fund_list
+from src.collector.fund import FundStorage, collect_fund_history, collect_recent_nav, refresh_fund_list
 from src.strategy.nav_estimator import NavEstimator
 from src.utils.logger import get_logger
 from src.workers.base_worker import BaseWorker, start_workers
@@ -46,7 +46,7 @@ def create_fund_workers(
     # 注册消息处理器：Redis Stream 的消息类型 -> 处理函数
     data_worker.register(
         "fund_incremental",
-        _make_collect_handler(collect_today_nav, storage, "fund_incremental"),
+        _make_collect_handler(collect_recent_nav, storage, "fund_incremental"),
     )
     # 基金列表刷新：从天天基金拉取全量列表，更新 fund_info 表（新增基金/名称变更）
     data_worker.register(
