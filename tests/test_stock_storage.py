@@ -1,4 +1,3 @@
-import psycopg2
 import pytest
 
 from src.collector.stock import StockStorage
@@ -25,7 +24,6 @@ class TestSyncStockList:
             {"code": "888888", "name": "测试股B", "market": "sz"},
         ]
         storage.sync_stock_list(conn, records)
-        conn.commit()
 
         cur = conn.cursor()
         cur.execute("SELECT code, name, market, active FROM stock_info WHERE code IN ('999999','888888') ORDER BY code")
@@ -38,11 +36,9 @@ class TestSyncStockList:
         cur = conn.cursor()
         cur.execute("INSERT INTO stock_info (code, name, market, active) VALUES ('777777','旧名称','sh',TRUE) "
                     "ON CONFLICT(code) DO UPDATE SET active=TRUE")
-        conn.commit()
 
         records = [{"code": "777777", "name": "新名称", "market": "sh"}]
         storage.sync_stock_list(conn, records)
-        conn.commit()
 
         cur.execute("SELECT code, name, market, active FROM stock_info WHERE code='777777'")
         row = cur.fetchone()
@@ -54,7 +50,6 @@ class TestGetActiveCodes:
         cur = conn.cursor()
         cur.execute("INSERT INTO stock_info (code, name, market, active) VALUES ('666666','活跃股','sh',TRUE)")
         cur.execute("INSERT INTO stock_info (code, name, market, active) VALUES ('555555','非活跃股','sz',FALSE)")
-        conn.commit()
 
         codes = storage.get_active_codes(conn)
         assert codes == ["666666"]
@@ -62,7 +57,6 @@ class TestGetActiveCodes:
     def test_returns_empty_when_no_active(self, storage, conn):
         cur = conn.cursor()
         cur.execute("INSERT INTO stock_info (code, name, market, active) VALUES ('444444','全非活跃','sh',FALSE)")
-        conn.commit()
 
         codes = storage.get_active_codes(conn)
         assert codes == []
