@@ -23,6 +23,8 @@ from .fetcher import (
     fetch_fund_list_refresh,
     fetch_fund_manager,
     fetch_fund_holdings,
+    fetch_fund_pingzhong,
+    PingzhongData,
 )
 from .storage import FundStorage
 from ...utils.logger import get_logger
@@ -37,6 +39,24 @@ class FundCollectResult:
     nav_rows_inserted: int = 0
     manager_rows_inserted: int = 0
     holding_rows_inserted: int = 0
+    fail_list: List[Tuple[str, str]] = field(default_factory=list)
+    elapsed_seconds: float = 0.0
+
+
+@dataclass
+class ManagerCollectResult:
+    total_funds: int = 0
+    success_count: int = 0
+    updated_count: int = 0
+    fail_list: List[Tuple[str, str]] = field(default_factory=list)
+    elapsed_seconds: float = 0.0
+
+
+@dataclass
+class HoldingsCollectResult:
+    total_funds: int = 0
+    success_count: int = 0
+    updated_count: int = 0
     fail_list: List[Tuple[str, str]] = field(default_factory=list)
     elapsed_seconds: float = 0.0
 
@@ -88,11 +108,9 @@ class FundCollector:
             async with sem:
                 code = fund["code"]
                 try:
-                    nav_rows = await self._fetch_with_retry(code, session)
-                    nav_rows = [r for r in nav_rows if r["nav_date"] >= str(cutoff)]
-
-                    # 基金经理 + 重仓股
-                    managers = await fetch_fund_manager(code, session)
+                    ping = await self._fetch_pingzhong_with_retry(code, session)
+                    nav_rows = [r for r in ping.nav_history if r["nav_date"] >= str(cutoff)]
+                    managers = ping.managers
                     report_date, holdings = await fetch_fund_holdings(code, session)
 
                     nav_ins = mgr_ins = hld_ins = 0
@@ -134,13 +152,13 @@ class FundCollector:
         )
         return result
 
-    async def _fetch_with_retry(
+    async def _fetch_pingzhong_with_retry(
         self, code: str, session
-    ) -> list[dict]:
+    ) -> PingzhongData:
         last_err = None
         for attempt in range(self.max_retries):
             try:
-                return await fetch_fund_full_history(code, session)
+                return await fetch_fund_pingzhong(code, session)
             except Exception as e:
                 last_err = e
                 if attempt < self.max_retries - 1:
@@ -150,13 +168,71 @@ class FundCollector:
         raise last_err  # type: ignore[misc]
 
 
-async def collect_fund_history(storage: FundStorage) -> FundCollectResult:
-    """全量历史净值采集（一次性 ETL，可手动触发）。
+async def collect_fund_history_nav(storage: FundStorage) -> FundCollectResult:
+    """全量历史净值采集（先清空再重采，仅净值）。
 
-    采集股票型/混合型/指数型基金近N年净值、基金经理、重仓股数据。
+    用法:
+        result = asyncio.run(collect_fund_history_nav(storage))
     """
-    collector = FundCollector(storage)
-    return await collector.run()
+    result = FundCollectResult()
+    t0 = time.time()
+
+    # 1. 从 DB 取基金列表 + 清空全部净值
+    conn = storage.connect()
+    try:
+        storage.init_schema(conn)
+        codes = storage.get_all_codes(conn)
+        deleted = storage.delete_all_nav(conn)
+        logger.info("已清空 %d 条历史净值记录", deleted)
+        conn.commit()
+    finally:
+        storage.return_conn(conn)
+
+    result.total_funds = len(codes)
+    logger.info("待采集基金: %d 只", len(codes))
+
+    # 2. 并发采集净值
+    cutoff = date.today() - timedelta(days=LOOKBACK_YEARS * 365)
+    sem = asyncio.Semaphore(CONCURRENCY)
+    completed = 0
+
+    async def collect_one(code: str, session):
+        nonlocal completed
+        async with sem:
+            try:
+                rows = await fetch_fund_full_history(code, session)
+                rows = [r for r in rows if r["nav_date"] >= str(cutoff)]
+                if not rows:
+                    return 0
+
+                conn2 = storage.connect()
+                try:
+                    inserted = storage.append_nav(conn2, rows)
+                    conn2.commit()
+                    return inserted
+                finally:
+                    storage.return_conn(conn2)
+            except Exception as e:
+                result.fail_list.append((code, str(e)))
+                logger.warning("净值采集失败 %s: %s", code, e)
+                return 0
+            finally:
+                completed += 1
+                if completed % PROGRESS_EVERY == 0:
+                    logger.info("净值采集进度: %d/%d", completed, result.total_funds)
+
+    async with _new_session() as session:
+        all_results = await asyncio.gather(*[collect_one(c, session) for c in codes])
+
+    result.nav_rows_inserted = sum(all_results)
+    result.success_count = result.total_funds - len(result.fail_list)
+    result.elapsed_seconds = round(time.time() - t0, 1)
+    logger.info(
+        "全量净值采集完成: 成功 %d/%d, 写入 %d 条, 失败 %d, 耗时 %.1fs",
+        result.success_count, result.total_funds,
+        result.nav_rows_inserted, len(result.fail_list), result.elapsed_seconds,
+    )
+    return result
 
 
 async def collect_recent_nav(
@@ -232,6 +308,135 @@ async def refresh_fund_list(storage: FundStorage) -> int:
         return count
     finally:
         storage.return_conn(conn)
+
+
+async def collect_manager_data(
+    storage: FundStorage, codes: Optional[List[str]] = None
+) -> ManagerCollectResult:
+    """独立采集基金经理信息
+
+    可用于基金经理变动后的增量更新。
+    """
+    result = ManagerCollectResult()
+    t0 = time.time()
+
+    conn = storage.connect()
+    try:
+        storage.init_schema(conn)
+        if codes is None:
+            codes = storage.get_all_codes(conn)
+    finally:
+        storage.return_conn(conn)
+
+    result.total_funds = len(codes)
+    logger.info("基金经理采集开始: %d 只基金", len(codes))
+
+    sem = asyncio.Semaphore(CONCURRENCY)
+    completed = 0
+
+    async def collect_one(code: str, session):
+        nonlocal completed
+        async with sem:
+            try:
+                managers = await fetch_fund_manager(code, session)
+                if not managers:
+                    return 0
+                conn2 = storage.connect()
+                try:
+                    inserted = storage.upsert_fund_managers(conn2, code, managers)
+                    conn2.commit()
+                    return inserted
+                finally:
+                    storage.return_conn(conn2)
+            except Exception as e:
+                result.fail_list.append((code, str(e)))
+                logger.warning("基金经理采集失败 %s: %s", code, e)
+                return 0
+            finally:
+                completed += 1
+                if completed % PROGRESS_EVERY == 0:
+                    logger.info("经理采集进度: %d/%d", completed, result.total_funds)
+
+    async with _new_session() as session:
+        all_results = await asyncio.gather(*[collect_one(c, session) for c in codes])
+
+    result.success_count = result.total_funds - len(result.fail_list)
+    result.updated_count = sum(all_results)
+    result.elapsed_seconds = round(time.time() - t0, 1)
+    logger.info(
+        "基金经理采集完成: 成功 %d/%d, 更新 %d 条, 失败 %d, 耗时 %.1fs",
+        result.success_count, result.total_funds,
+        result.updated_count, len(result.fail_list), result.elapsed_seconds,
+    )
+    return result
+
+
+async def collect_holdings_data(
+    storage: FundStorage, codes: Optional[List[str]] = None
+) -> HoldingsCollectResult:
+    """独立采集基金重仓股持仓
+
+    增量逻辑：先获取 report_date 检查 DB 是否已有该季度数据，已存在则跳过。
+    """
+    result = HoldingsCollectResult()
+    t0 = time.time()
+
+    conn = storage.connect()
+    try:
+        storage.init_schema(conn)
+        if codes is None:
+            codes = storage.get_all_codes(conn)
+    finally:
+        storage.return_conn(conn)
+
+    result.total_funds = len(codes)
+    logger.info("重仓股采集开始: %d 只基金", len(codes))
+
+    sem = asyncio.Semaphore(CONCURRENCY)
+    completed = 0
+    skipped = 0
+
+    async def collect_one(code: str, session):
+        nonlocal completed, skipped
+        async with sem:
+            try:
+                report_date, holdings = await fetch_fund_holdings(code, session)
+                if not holdings or not report_date:
+                    return (0, 0)
+
+                conn2 = storage.connect()
+                try:
+                    if storage.has_holdings_for_report(conn2, code, report_date):
+                        skipped += 1
+                        return (0, 0)
+                    inserted = storage.upsert_fund_holdings(
+                        conn2, code, report_date, holdings
+                    )
+                    conn2.commit()
+                    return (inserted, 1)
+                finally:
+                    storage.return_conn(conn2)
+            except Exception as e:
+                result.fail_list.append((code, str(e)))
+                logger.warning("重仓股采集失败 %s: %s", code, e)
+                return (0, 0)
+            finally:
+                completed += 1
+                if completed % PROGRESS_EVERY == 0:
+                    logger.info("持仓采集进度: %d/%d", completed, result.total_funds)
+
+    async with _new_session() as session:
+        all_results = await asyncio.gather(*[collect_one(c, session) for c in codes])
+
+    result.success_count = result.total_funds - len(result.fail_list)
+    result.updated_count = sum(r[1] for r in all_results)
+    result.elapsed_seconds = round(time.time() - t0, 1)
+    logger.info(
+        "重仓股采集完成: 成功 %d/%d, 有新季度数据 %d 只, 跳过 %d 只, 失败 %d, 耗时 %.1fs",
+        result.success_count, result.total_funds,
+        result.updated_count, skipped, len(result.fail_list), result.elapsed_seconds,
+    )
+    return result
 
 
 def _new_session():

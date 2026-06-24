@@ -2,6 +2,7 @@
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -23,6 +24,13 @@ from ...utils.logger import get_logger
 CST = timezone(timedelta(hours=8))
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class PingzhongData:
+    """Parsed data from a single fetch of pingzhongdata/{code}.js."""
+    nav_history: list[dict]
+    managers: list[dict]
 
 
 async def fetch_fund_list(session: Optional[aiohttp.ClientSession] = None) -> list[dict]:
@@ -55,21 +63,13 @@ async def fetch_fund_list(session: Optional[aiohttp.ClientSession] = None) -> li
     return result
 
 
-async def fetch_fund_full_history(
-    code: str, session: Optional[aiohttp.ClientSession] = None
-) -> list[dict]:
-    """拉取单只基金全部历史净值（自成立日起）。
-
-    Args:
-        code: 6位基金代码
+def _parse_nav_history(text: str, code: str) -> list[dict]:
+    """Parse Data_netWorthTrend and Data_ACWorthTrend from pingzhongdata JS text.
 
     Returns:
         [{"code": "019018", "nav_date": "2024-05-28", "unit_nav": 1.2345,
           "accum_nav": 2.3456, "daily_growth": 0.25}, ...]
     """
-    url = FUND_HISTORY_TPL.format(code=code)
-    text = await _get_text(session, url, HEADERS_FUND)
-
     nav_pattern = r"Data_netWorthTrend\s*=\s*(\[.*?\])\s*;"
     nav_match = re.search(nav_pattern, text, re.DOTALL)
     if not nav_match:
@@ -127,27 +127,43 @@ async def fetch_fund_full_history(
     return rows
 
 
+async def fetch_fund_full_history(
+    code: str, session: Optional[aiohttp.ClientSession] = None
+) -> list[dict]:
+    """拉取单只基金全部历史净值（自成立日起）。
+
+    Args:
+        code: 6位基金代码
+
+    Returns:
+        [{"code": "019018", "nav_date": "2024-05-28", "unit_nav": 1.2345,
+          "accum_nav": 2.3456, "daily_growth": 0.25}, ...]
+    """
+    url = FUND_HISTORY_TPL.format(code=code)
+    text = await _get_text(session, url, HEADERS_FUND)
+    return _parse_nav_history(text, code)
+
+
 def _ts_to_date(ts: int) -> str:
     """Unix 毫秒时间戳 → YYYY-MM-DD（北京时间）"""
     return datetime.fromtimestamp(ts / 1000, tz=CST).strftime("%Y-%m-%d")
 
 
-async def fetch_fund_manager(
-    code: str, session: Optional[aiohttp.ClientSession] = None
-) -> list[dict]:
-    """拉取单只基金的基金经理信息。
-
-    数据来源: pingzhongdata/{code}.js 中的 Data_currentFundManager 变量。
+def _parse_manager_data(text: str) -> list[dict]:
+    """Parse Data_currentFundManager from pingzhongdata JS text.
 
     Returns:
-        [{"manager_id": "30379533", "name": "侯昊", "star": 5,
-          "work_time": "8年又282天", "fund_size": "533.63亿(24只基金)",
-          "power_avr": 83.64, "power_json": "[87.4, 71.6, ...]",
-          "profit_json": "{...}"}, ...]
+        [{
+            "manager_id": "30691973",    # 基金经理ID（天天基金内部ID）
+            "name": "姚楠燕",             # 基金经理姓名
+            "star": 4,                   # 星级评分 1-5
+            "work_time": "6年又98天",     # 从业年限描述
+            "fund_size": "37.93亿(28只基金)",  # 管理规模描述
+            "power_avr": 73.84,          # 综合管理能力评分（五项加权均值）
+            "power_json": "[81.0, 78.5, 76.9, 66.0, 76.1]",  # 五项评分明细 JSON [经验值,收益率,跟踪误差,超额收益,管理规模]
+            "profit_json": "{...}",      # 任期收益对比 JSON {tenure, peer_avg, hs300}
+        }, ...]
     """
-    url = FUND_HISTORY_TPL.format(code=code)
-    text = await _get_text(session, url, HEADERS_FUND)
-
     mgr_pattern = r"Data_currentFundManager\s*=\s*(.+?);\s*/\*"
     mgr_match = re.search(mgr_pattern, text)
     if not mgr_match:
@@ -155,8 +171,7 @@ async def fetch_fund_manager(
 
     try:
         managers = json.loads(mgr_match.group(1))
-    except json.JSONDecodeError as e:
-        logger.warning("%s: Data_currentFundManager JSON parse failed: %s", code, e)
+    except json.JSONDecodeError:
         return []
     result = []
     for m in managers:
@@ -183,6 +198,40 @@ async def fetch_fund_manager(
             "profit_json": profit_json,
         })
     return result
+
+
+async def fetch_fund_manager(
+    code: str, session: Optional[aiohttp.ClientSession] = None
+) -> list[dict]:
+    """拉取单只基金的基金经理信息。
+
+    数据来源: pingzhongdata/{code}.js 中的 Data_currentFundManager 变量。
+
+    Returns:
+        [{"manager_id": "30379533", "name": "侯昊", "star": 5,
+          "work_time": "8年又282天", "fund_size": "533.63亿(24只基金)",
+          "power_avr": 83.64, "power_json": "[87.4, 71.6, ...]",
+          "profit_json": "{...}"}, ...]
+    """
+    url = FUND_HISTORY_TPL.format(code=code)
+    text = await _get_text(session, url, HEADERS_FUND)
+    return _parse_manager_data(text)
+
+
+async def fetch_fund_pingzhong(
+    code: str, session: Optional[aiohttp.ClientSession] = None
+) -> PingzhongData:
+    """拉取 pingzhongdata/{code}.js 一次，同时解析净值历史和基金经理信息。
+
+    避免在需要两类数据时分别调用 fetch_fund_full_history 和 fetch_fund_manager
+    导致的重复 HTTP 请求。
+    """
+    url = FUND_HISTORY_TPL.format(code=code)
+    text = await _get_text(session, url, HEADERS_FUND)
+    return PingzhongData(
+        nav_history=_parse_nav_history(text, code),
+        managers=_parse_manager_data(text),
+    )
 
 
 async def fetch_fund_holdings(

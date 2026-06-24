@@ -12,7 +12,14 @@ from pathlib import Path
 
 from redis import Redis
 
-from src.collector.fund import FundStorage, collect_fund_history, collect_recent_nav, refresh_fund_list
+from src.collector.fund import (
+    FundStorage,
+    collect_fund_history_nav,
+    collect_recent_nav,
+    refresh_fund_list,
+    collect_manager_data,
+    collect_holdings_data,
+)
 from src.strategy.nav_estimator import NavEstimator
 from src.utils.logger import get_logger
 from src.workers.base_worker import BaseWorker, start_workers
@@ -53,10 +60,28 @@ def create_fund_workers(
         "fund_list_refresh",
         _make_collect_handler(refresh_fund_list, storage, "fund_list_refresh"),
     )
+
+    
     # 全量历史净值采集：拉取所有基金近两年净值、基金经理、重仓股（手动触发）
     data_worker.register(
-        "fund_history_full",
-        _make_collect_handler(collect_fund_history, storage, "fund_history_full"),
+        "fund_history_nav_refresh",
+        _make_collect_handler(collect_fund_history_nav, storage, "fund_history_nav_refresh"),
+    )
+
+
+
+    # 基金经理采集：仅拉取经理信息（经理变动时触发）
+    data_worker.register(
+        "fund_manager_refresh",
+        _make_collect_handler(collect_manager_data, storage, "fund_manager_refresh"),
+    )
+
+
+
+    # 重仓股采集：仅拉取最新季度前十大持仓（季度报告发布后触发）
+    data_worker.register(
+        "fund_holdings_refresh",
+        _make_collect_handler(collect_holdings_data, storage, "fund_holdings_refresh"),
     )
 
     # ---- 净值估算 worker ----

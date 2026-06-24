@@ -460,6 +460,12 @@ class FundStorage:
         with conn.cursor() as cur:
             cur.execute(f"DELETE FROM {FUND_NAV_TABLE} WHERE code = %s", (code,))
 
+    def delete_all_nav(self, conn) -> int:
+        """清空全部净值数据（全量重采前调用）。"""
+        with conn.cursor() as cur:
+            cur.execute(f"DELETE FROM {FUND_NAV_TABLE}")
+            return cur.rowcount
+
     def get_all_codes(self, conn=None, include_deleted: bool = False) -> list[str]:
         own = conn is None
         conn = conn or self.connect()
@@ -654,6 +660,18 @@ class FundStorage:
             cols = ["code", "report_date", "stock_code", "stock_name", "rank",
                     "nav_pct", "shares_wan", "market_cap_wan"]
             return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def has_holdings_for_report(self, conn, code: str, report_date: str) -> bool:
+        """检查某基金某季度持仓是否已入库（用于增量采集跳过）。"""
+        if not report_date:
+            return False
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT 1 FROM {FUND_HOLDING_TABLE} "
+                f"WHERE code = %s AND report_date = %s LIMIT 1",
+                (code, report_date),
+            )
+            return cur.fetchone() is not None
 
     def get_latest_nav(self, conn, fund_code: str) -> dict | None:
         """获取基金最近一个交易日的净值。"""
