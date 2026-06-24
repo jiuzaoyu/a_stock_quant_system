@@ -19,3 +19,9 @@ stock_collector:
 
   # 并发线程数
   concurrency: 5
+
+  # 增量采集回溯天数（交易日）
+  daily_lookback_days: 7
+
+  # 历史补齐回溯天数
+  history_lookback_days: 500
