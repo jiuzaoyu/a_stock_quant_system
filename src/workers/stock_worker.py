@@ -142,7 +142,7 @@ def _make_stock_list_sync_handler(storage: StockStorage):
             try:
                 count = storage.sync_stock_list(conn, stocks)
                 conn.commit()
-                log.info("stock_list_sync 完成: %d 只股票", len(stocks))
+                log.info("stock_list_sync 完成: %d 行变更", count)
             finally:
                 storage.return_conn(conn)
         except Exception:
