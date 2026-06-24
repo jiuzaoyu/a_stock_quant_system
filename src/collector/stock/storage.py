@@ -95,6 +95,7 @@ STOCK_COMMENTS = [
     (f"{STOCK_INFO_TABLE}.market", "市场: sh(沪) / sz(深) / bj(北)"),
     (f"{STOCK_INFO_TABLE}.created_at", "记录首次入库时间"),
     (f"{STOCK_INFO_TABLE}.updated_at", "记录最近更新时间"),
+    (f"{STOCK_INFO_TABLE}.active", "采集开关：TRUE=参与定时采集，FALSE=跳过。默认FALSE需手动开启"),
     # stock_daily
     (f"TABLE {STOCK_DAILY_TABLE}", "A股日K线数据（OHLCV）"),
     (f"{STOCK_DAILY_TABLE}.code", "股票代码"),
