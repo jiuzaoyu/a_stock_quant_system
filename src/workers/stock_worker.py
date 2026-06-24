@@ -28,15 +28,50 @@ def create_stock_workers(redis_client: Redis) -> list[BaseWorker]:
     storage = StockStorage()
     storage.init_schema()
 
+    # 加载配置
+    root = Path(__file__).resolve().parents[2]
+    stock_cfg = load_yaml(root / "config" / "stock_collector.yaml").get("stock_collector", {})
+    concurrency = stock_cfg.get("concurrency", 5)
+    delay = stock_cfg.get("request_delay_seconds", 0.3)
+    max_retries = stock_cfg.get("max_retries", 3)
+    daily_lookback = stock_cfg.get("daily_lookback_days", 7)
+    history_lookback = stock_cfg.get("history_lookback_days", 500)
+
     data_worker = BaseWorker(
         redis_client,
         stream="cron:jobs:stock_queue_1",
         group="stock_queue_group",
         consumer="stock_queue_consumer_1",
     )
+
+    # 原有：单股采集
     data_worker.register(
         "stock_collect_single",
         _make_single_stock_handler(storage),
+    )
+
+    # 股票列表同步
+    data_worker.register(
+        "stock_list_sync",
+        _make_stock_list_sync_handler(storage),
+    )
+
+    # 历史数据补齐
+    data_worker.register(
+        "stock_history_collect",
+        _make_batch_collect_handler(
+            storage, concurrency, history_lookback, delay, max_retries,
+            job_name="stock_history_collect",
+        ),
+    )
+
+    # 每日增量采集
+    data_worker.register(
+        "stock_daily_collect",
+        _make_batch_collect_handler(
+            storage, concurrency, daily_lookback, delay, max_retries,
+            job_name="stock_daily_collect", check_trading_day=True,
+        ),
     )
 
     return [data_worker]
