@@ -198,19 +198,7 @@ class StockStorage:
 
     def sync_stock_list(self, conn, records: list[dict]) -> int:
         """批量同步股票列表：新股票 INSERT (active=FALSE)，已有股票 UPDATE name/market（不修改 active）。"""
-        sql = f"""
-        INSERT INTO {STOCK_INFO_TABLE} (code, name, market)
-        VALUES %s
-        ON CONFLICT(code) DO UPDATE SET
-            name = excluded.name,
-            market = excluded.market,
-            updated_at = NOW()
-        """
-        tuples = [(sanitize(r["code"]), sanitize(r["name"]), sanitize(r.get("market", ""))) for r in records]
-        tuples = list({t[0]: t for t in tuples}.values())
-        with conn.cursor() as cur:
-            execute_values(cur, sql, tuples, page_size=1000)
-            return cur.rowcount
+        return self.upsert_stock_info(conn, records)
 
     def append_daily(self, conn, records: list[dict]) -> int:
         """批量追加日K线记录（已存在的主键自动忽略）。"""
