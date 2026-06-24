@@ -159,6 +159,18 @@ class StockStorage:
                 cur.execute(INDEX_DAILY_DATE)
                 cur.execute(INDEX_VALUATION_CODE_DATE)
                 cur.execute(INDEX_VALUATION_DATE)
+                # 迁移：添加 active 列 (v2)
+                cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'stock_info' AND column_name = 'active'
+                    ) THEN
+                        ALTER TABLE stock_info ADD COLUMN active BOOLEAN NOT NULL DEFAULT FALSE;
+                    END IF;
+                END $$;
+                """)
                 for obj, desc in STOCK_COMMENTS:
                     prefix = "" if obj.startswith("TABLE ") else "COLUMN "
                     cur.execute(f"COMMENT ON {prefix}{obj} IS %s", (desc,))
