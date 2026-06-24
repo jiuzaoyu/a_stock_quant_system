@@ -84,15 +84,9 @@ def create_fund_workers(
         _make_collect_handler(collect_holdings_data, storage, "fund_holdings_refresh"),
     )
 
-    # ---- 净值估算 worker ----
+    # 净值估算：基于最新持仓和实时行情估算基金净值 + 操作建议
     estimator = NavEstimator(storage, config_path=config_path)
-    nav_worker = BaseWorker(
-        redis_client,
-        stream="cron:jobs:nav_estimation",
-        group="nav_estimation_group",
-        consumer="nav_estimation_consumer_1",
-    )
-    nav_worker.register("nav_estimation", _make_nav_handler(storage, estimator))
+    data_worker.register("nav_estimation", _make_estimation_handler(storage, estimator))
 
     return [data_worker]
 
@@ -115,26 +109,25 @@ def _make_collect_handler(async_func, storage: FundStorage, job_name: str):
     return handler
 
 
-def _make_nav_handler(storage: FundStorage, estimator: NavEstimator):
+def _make_estimation_handler(storage: FundStorage, estimator: NavEstimator):
     def handler(data: dict[str, str]) -> None:
-        log.info("=== 盘中净值估算开始 ===")
-
-        if not _is_trading_day():
-            log.info("今日非交易日，跳过估算")
-            return
-
-        conn = storage.connect()
+        log.info("=== nav_estimation 开始 ===")
         try:
-            results = estimator.estimate_all(conn)
-            conn.commit()
-            log.info("净值估算完成，共 %d 只基金", len(results))
-            _print_summary(results)
+            if not _is_trading_day():
+                log.info("今日非交易日，跳过估算")
+                return
+
+            conn = storage.connect()
+            try:
+                results = estimator.estimate_all(conn)
+                conn.commit()
+                log.info("nav_estimation 完成: %d 只基金", len(results))
+                _print_summary(results)
+            finally:
+                storage.return_conn(conn)
         except Exception:
-            log.exception("净值估算失败")
-            conn.rollback()
+            log.exception("nav_estimation 失败")
             raise
-        finally:
-            storage.return_conn(conn)
 
     return handler
 
