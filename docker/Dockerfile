@@ -20,4 +20,5 @@ RUN mkdir -p /app/data /app/logs /app/output
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-CMD python scripts/run_workers.py
+# 容器启动时先探测 mootdx 最快行情服务器，再启动 Worker
+CMD sh -c "python -m mootdx bestip && python scripts/run_workers.py"
