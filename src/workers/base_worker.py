@@ -40,7 +40,7 @@ class BaseWorker:
             if not result:
                 break
 
-            next_start_id, messages = result
+            next_start_id, messages, _ = result
             for msg_id, data in messages:
                 job_type = data.get("job_type", "")
                 handler = self._handlers.get(job_type)
