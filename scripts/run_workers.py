@@ -65,7 +65,7 @@ def run_stock_worker():
 
     redis_client = _create_redis_client()
     workers = create_stock_workers(redis_client)
-    log.info("Stock workers starting (%d threads)", len(workers))
+    log.info("股票采集 Worker 启动中 (%d 个线程)", len(workers))
     start_workers(workers)
 
 
