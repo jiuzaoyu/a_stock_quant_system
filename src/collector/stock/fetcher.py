@@ -80,9 +80,7 @@ def _fetch_stock_list_mootdx() -> list[dict]:
       - 000001 在沪市(market=1)是"上证指数"，在深市(market=0)是"平安银行"
       - 必须按市场分别过滤，避免将指数当股票入库
     """
-    from mootdx.quotes import Quotes
-
-    client = Quotes.factory(market="std")
+    client = _mootdx_client()
     records = []
     seen = set()
 
@@ -137,10 +135,16 @@ def _fetch_stock_list_akshare() -> list[dict]:
 
 
 def _mootdx_client():
-    """获取 mootdx 标准行情客户端。"""
+    """获取 mootdx 标准行情客户端（带服务发现重试）。"""
     from mootdx.quotes import Quotes
 
-    return Quotes.factory(market="std")
+    try:
+        return Quotes.factory(market="std")
+    except (ValueError, IndexError):
+        # Docker 等环境中服务探测可能失败，运行一次 bestip 后重试
+        import subprocess, sys
+        subprocess.run([sys.executable, "-m", "mootdx", "bestip"], capture_output=True)
+        return Quotes.factory(market="std")
 
 
 def fetch_kline(
